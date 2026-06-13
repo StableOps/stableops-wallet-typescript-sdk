@@ -2,11 +2,23 @@
   "name": "@stableops/wallet-sdk",
   "version": "0.1.0",
   "private": false,
+  "description": "Browser wallet SDK for StableOps — send on-chain USDC/USDT transfers directly from user wallets.",
+  "keywords": [
+    "stableops",
+    "wallet",
+    "sdk",
+    "solana",
+    "stablecoin",
+    "usdc",
+    "usdt",
+    "transfer"
+  ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/StableOps/stableops-wallet-typescript-sdk.git"
   },
+  "homepage": "https://stableops.dev",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
