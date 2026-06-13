@@ -1,10 +1,29 @@
-import {
+import type {
   Connection,
   PublicKey,
-  SystemProgram,
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js'
+
+// @solana/web3.js 是可选 peer 依赖：仅 Solana 支付路径需要，懒加载以免
+// 只用 EVM/TRON 的使用者被迫安装，且缺失时抛出友好异常而非模块加载崩溃。
+type SolanaWeb3 = typeof import('@solana/web3.js')
+
+let solanaWeb3Promise: Promise<SolanaWeb3> | undefined
+
+async function loadSolanaWeb3(): Promise<SolanaWeb3> {
+  if (!solanaWeb3Promise) {
+    solanaWeb3Promise = import('@solana/web3.js').catch((err) => {
+      solanaWeb3Promise = undefined
+      throw new StableOpsWalletError(
+        'Solana 支付需要可选依赖 @solana/web3.js，请先安装：npm install @solana/web3.js',
+        'solana_dependency_missing',
+        { cause: err },
+      )
+    })
+  }
+  return solanaWeb3Promise
+}
 
 export type ChainId =
   | 'ethereum'
@@ -132,8 +151,8 @@ const TRON_WALLET_CHAINS = ['tron', 'tron-nile'] as const
 const SOLANA_WALLET_CHAINS = ['solana', 'solana-devnet'] as const
 const ERC20_TRANSFER_SELECTOR = 'a9059cbb'
 const SOLANA_MAINNET_RPC_URL = 'https://api.mainnet-beta.solana.com'
-const SOLANA_TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+const SOLANA_TOKEN_PROGRAM_ID_BASE58 = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58 = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
 const SOLANA_TRANSFER_CHECKED_INSTRUCTION = 12
 const SOLANA_CREATE_ASSOCIATED_TOKEN_ACCOUNT_IDEMPOTENT_INSTRUCTION = 1
 
@@ -509,29 +528,44 @@ async function sendSolanaWalletPayment(
   instruction: WalletPaymentInstruction,
   token: WalletTokenContract,
 ): Promise<SentWalletPayment> {
+  const web3 = await loadSolanaWeb3()
   const provider = input.provider as SolanaWalletProvider
-  const payer = publicKeyFromString(input.fromAddress ?? (await requestSolanaPublicKey(provider)))
-  const recipient = publicKeyFromString(instruction.address)
-  const mint = publicKeyFromString(token.address)
+  const payer = publicKeyFromString(web3, input.fromAddress ?? (await requestSolanaPublicKey(provider)))
+  const recipient = publicKeyFromString(web3, instruction.address)
+  const mint = publicKeyFromString(web3, token.address)
   const amountUnits = parseTokenAmount(input.amount, token.decimals)
-  const connection = input.solanaConnection ?? new Connection(input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL, 'confirmed')
-  const sourceTokenAccount = findAssociatedTokenAddress(payer, mint)
-  const destinationTokenAccount = findAssociatedTokenAddress(recipient, mint)
+  const connection = input.solanaConnection ?? new web3.Connection(input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL, 'confirmed')
+  const tokenProgramId = new web3.PublicKey(SOLANA_TOKEN_PROGRAM_ID_BASE58)
+  const associatedTokenProgramId = new web3.PublicKey(SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58)
+  const sourceTokenAccount = findAssociatedTokenAddress(web3, payer, mint, tokenProgramId, associatedTokenProgramId)
+  const destinationTokenAccount = findAssociatedTokenAddress(web3, recipient, mint, tokenProgramId, associatedTokenProgramId)
   const latest = await connection.getLatestBlockhash()
-  const transaction = new Transaction({
+  const transaction = new web3.Transaction({
     feePayer: payer,
     recentBlockhash: latest.blockhash,
   })
 
-  transaction.add(createAssociatedTokenAccountIdempotentInstruction(payer, destinationTokenAccount, recipient, mint))
+  transaction.add(
+    createAssociatedTokenAccountIdempotentInstruction(
+      web3,
+      payer,
+      destinationTokenAccount,
+      recipient,
+      mint,
+      tokenProgramId,
+      associatedTokenProgramId,
+    ),
+  )
   transaction.add(
     createSplTokenTransferCheckedInstruction(
+      web3,
       sourceTokenAccount,
       mint,
       destinationTokenAccount,
       payer,
       amountUnits,
       token.decimals,
+      tokenProgramId,
     ),
   )
 
@@ -715,55 +749,66 @@ function solanaPublicKeyToString(publicKey: SolanaPublicKeyLike | string | null 
   return publicKey.toBase58()
 }
 
-function publicKeyFromString(address: string): PublicKey {
+function publicKeyFromString(web3: SolanaWeb3, address: string): PublicKey {
   try {
-    return new PublicKey(address)
+    return new web3.PublicKey(address)
   } catch (err) {
     throw new StableOpsWalletError('Solana 地址格式无效', 'invalid_solana_address', { address, cause: err })
   }
 }
 
-function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [owner.toBuffer(), SOLANA_TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
-    SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID,
+function findAssociatedTokenAddress(
+  web3: SolanaWeb3,
+  owner: PublicKey,
+  mint: PublicKey,
+  tokenProgramId: PublicKey,
+  associatedTokenProgramId: PublicKey,
+): PublicKey {
+  return web3.PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), tokenProgramId.toBuffer(), mint.toBuffer()],
+    associatedTokenProgramId,
   )[0]
 }
 
 function createAssociatedTokenAccountIdempotentInstruction(
+  web3: SolanaWeb3,
   payer: PublicKey,
   associatedToken: PublicKey,
   owner: PublicKey,
   mint: PublicKey,
+  tokenProgramId: PublicKey,
+  associatedTokenProgramId: PublicKey,
 ): TransactionInstruction {
-  return new TransactionInstruction({
-    programId: SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID,
+  return new web3.TransactionInstruction({
+    programId: associatedTokenProgramId,
     keys: [
       { pubkey: payer, isSigner: true, isWritable: true },
       { pubkey: associatedToken, isSigner: false, isWritable: true },
       { pubkey: owner, isSigner: false, isWritable: false },
       { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: SOLANA_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: web3.SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     ],
     data: new Uint8Array([SOLANA_CREATE_ASSOCIATED_TOKEN_ACCOUNT_IDEMPOTENT_INSTRUCTION]) as unknown as Buffer,
   })
 }
 
 function createSplTokenTransferCheckedInstruction(
+  web3: SolanaWeb3,
   source: PublicKey,
   mint: PublicKey,
   destination: PublicKey,
   owner: PublicKey,
   amountUnits: bigint,
   decimals: number,
+  tokenProgramId: PublicKey,
 ): TransactionInstruction {
   const data = new Uint8Array(10)
   data[0] = SOLANA_TRANSFER_CHECKED_INSTRUCTION
   writeBigUInt64LE(data, amountUnits, 1)
   data[9] = decimals
-  return new TransactionInstruction({
-    programId: SOLANA_TOKEN_PROGRAM_ID,
+  return new web3.TransactionInstruction({
+    programId: tokenProgramId,
     keys: [
       { pubkey: source, isSigner: false, isWritable: true },
       { pubkey: mint, isSigner: false, isWritable: false },

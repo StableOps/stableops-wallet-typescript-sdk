@@ -1,8 +1,12 @@
 {
   "name": "@stableops/wallet-sdk",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": false,
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StableOps/stableops-wallet-typescript-sdk.git"
+  },
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -18,22 +22,31 @@
       }
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "pnpm build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {
-    "@solana/web3.js": "1.98.4"
+  "peerDependencies": {
+    "@solana/web3.js": "^1.98.0"
+  },
+  "peerDependenciesMeta": {
+    "@solana/web3.js": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.16.0",
+    "@solana/web3.js": "1.98.4",
     "@types/node": "^24.0.0",
     "eslint": "^9.16.0",
     "globals": "^15.14.0",
