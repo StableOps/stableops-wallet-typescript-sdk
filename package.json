@@ -1,6 +1,6 @@
 {
   "name": "@stableops/wallet-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Browser wallet SDK for StableOps — send on-chain USDC/USDT transfers directly from user wallets.",
   "keywords": [
