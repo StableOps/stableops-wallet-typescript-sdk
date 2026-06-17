@@ -5,8 +5,9 @@ import type {
   TransactionInstruction,
 } from '@solana/web3.js'
 
-// @solana/web3.js 是可选 peer 依赖：仅 Solana 支付路径需要，懒加载以免
-// 只用 EVM/TRON 的使用者被迫安装，且缺失时抛出友好异常而非模块加载崩溃。
+// @solana/web3.js is an optional peer dep — only needed for Solana payment paths.
+// Lazily loaded so EVM/TRON-only users don't need to install it, and a friendly
+// error is thrown if it's missing rather than crashing at module load.
 type SolanaWeb3 = typeof import('@solana/web3.js')
 
 let solanaWeb3Promise: Promise<SolanaWeb3> | undefined
@@ -16,7 +17,7 @@ async function loadSolanaWeb3(): Promise<SolanaWeb3> {
     solanaWeb3Promise = import('@solana/web3.js').catch((err) => {
       solanaWeb3Promise = undefined
       throw new StableOpsWalletError(
-        'Solana 支付需要可选依赖 @solana/web3.js，请先安装：npm install @solana/web3.js',
+        'Solana payments require the optional dependency @solana/web3.js; please install it: npm install @solana/web3.js',
         'solana_dependency_missing',
         { cause: err },
       )
@@ -202,7 +203,7 @@ export type WalletProvider =
   | SolanaWalletProvider
 
 type TronWebLike = {
-  // TronLink 未连接/未就绪时把 base58 置为 false（而非缺省），类型如实反映以便正确判定就绪。
+  // TronLink sets base58 to false (rather than undefined) when not connected/ready — the type reflects this so readiness checks work correctly.
   defaultAddress?: { base58?: string | false; hex?: string | false }
   address?: {
     fromHex?(address: string): string
@@ -300,12 +301,13 @@ export class StableOpsWalletError extends Error {
 }
 
 // ── Debug ──────────────────────────────────────────────────────────────────
-// 模块级 debug 开关：默认关，关闭时所有 walletDebug() 调用是零开销 no-op。
-// 开启方式（任一）：
-//   1) setWalletSdkDebug(true)（代码里显式打开/关闭）
-//   2) 全局 globalThis.STABLEOPS_WALLET_DEBUG = true（浏览器控制台即可临时打开）
-//   3) 环境变量 WALLET_SDK_DEBUG=1 / true（Node / 打包注入）
-// 优先级：setWalletSdkDebug 一旦被显式调用即以它为准，否则回落到全局/环境兜底。
+// Module-level debug flag: off by default so walletDebug() calls are zero-cost no-ops.
+// Enable via any of:
+//   1) setWalletSdkDebug(true) (explicit toggle in code)
+//   2) globalThis.STABLEOPS_WALLET_DEBUG = true (browser console)
+//   3) env var WALLET_SDK_DEBUG=1 / true (Node / bundler injection)
+// Precedence: once setWalletSdkDebug is called explicitly it takes precedence;
+// otherwise falls back to global/env flags.
 let moduleDebug: boolean | undefined
 
 export function setWalletSdkDebug(enabled: boolean): void {
@@ -324,7 +326,7 @@ export function isWalletSdkDebugEnabled(): boolean {
   return env === '1' || env === 'true'
 }
 
-// 统一日志出口：带 [wallet-sdk] 前缀，浏览器与 Node 控制台均可读；关闭时直接返回不计算参数开销。
+// Unified log output with [wallet-sdk] prefix, readable in both browser and Node consoles. Disabled by default so args aren't even evaluated.
 function walletDebug(event: string, data?: Record<string, unknown>): void {
   if (!isWalletSdkDebugEnabled()) return
   if (data !== undefined) {
@@ -458,7 +460,7 @@ export function selectWalletPaymentInstruction(
 ): { instruction: WalletPaymentInstruction; provider: WalletProvider } {
   if (instructions.length === 0) {
     throw new StableOpsWalletError(
-      '订单还没有可支付的链上收款指令',
+      'No payable on-chain payment instruction found for this order',
       'payment_instruction_not_found',
     )
   }
@@ -478,7 +480,7 @@ export function selectWalletPaymentInstruction(
     if (provider) return { instruction, provider }
   }
   throw new StableOpsWalletError(
-    '未找到订单候选链对应的钱包 provider',
+    'No wallet provider found for any candidate chain in the order',
     'wallet_provider_not_found',
     {
       chains: instructions.map((instruction) => instruction.chain),
@@ -509,7 +511,7 @@ export async function sendWalletPayment(
   const token = findWalletTokenContract(instruction.chain, instruction.asset)
   if (!token) {
     throw new StableOpsWalletError(
-      '未找到该链与资产的默认代币合约',
+      'No default token contract found for this chain and asset',
       'token_contract_not_found',
       {
         chain: instruction.chain,
@@ -541,7 +543,7 @@ export async function sendWalletPayment(
       sent = await sendSolanaWalletPayment(input, instruction, token)
     } else {
       throw new StableOpsWalletError(
-        '当前钱包 SDK 不支持该链',
+        'The wallet SDK does not support this chain',
         'unsupported_chain',
         {
           chain: instruction.chain,
@@ -570,7 +572,7 @@ export function encodeErc20Transfer(
 ): string {
   const normalizedTo = normalizeEvmAddress(toAddress)
   if (amountUnits < 0n) {
-    throw new StableOpsWalletError('转账金额不能为负数', 'invalid_amount', {
+    throw new StableOpsWalletError('Transfer amount cannot be negative', 'invalid_amount', {
       amountUnits: amountUnits.toString(),
     })
   }
@@ -579,7 +581,7 @@ export function encodeErc20Transfer(
 
 export function parseTokenAmount(amount: string, decimals: number): bigint {
   if (!Number.isInteger(decimals) || decimals < 0) {
-    throw new StableOpsWalletError('代币精度配置无效', 'invalid_decimals', {
+    throw new StableOpsWalletError('Invalid token decimal configuration', 'invalid_decimals', {
       decimals,
     })
   }
@@ -587,7 +589,7 @@ export function parseTokenAmount(amount: string, decimals: number): bigint {
   const trimmed = amount.trim()
   const match = /^(\d+)(?:\.(\d+))?$/u.exec(trimmed)
   if (!match) {
-    throw new StableOpsWalletError('转账金额格式无效', 'invalid_amount', {
+    throw new StableOpsWalletError('Invalid transfer amount format', 'invalid_amount', {
       amount,
     })
   }
@@ -596,7 +598,7 @@ export function parseTokenAmount(amount: string, decimals: number): bigint {
   const fraction = match[2] ?? ''
   if (fraction.length > decimals) {
     throw new StableOpsWalletError(
-      '转账金额小数位超过代币精度',
+      'Transfer amount decimal places exceed token precision',
       'amount_precision_exceeded',
       {
         amount,
@@ -609,7 +611,7 @@ export function parseTokenAmount(amount: string, decimals: number): bigint {
     BigInt(whole) * 10n ** BigInt(decimals) +
     BigInt(fraction.padEnd(decimals, '0') || '0')
   if (units <= 0n) {
-    throw new StableOpsWalletError('转账金额必须大于 0', 'invalid_amount', {
+    throw new StableOpsWalletError('Transfer amount must be greater than 0', 'invalid_amount', {
       amount,
     })
   }
@@ -624,7 +626,7 @@ async function sendEvmWalletPayment(
   const provider = input.provider as Eip1193Provider
   if (!isEip1193Provider(provider)) {
     throw new StableOpsWalletError(
-      'EVM 支付需要 EIP-1193 钱包 provider',
+      'EVM payments require an EIP-1193 wallet provider',
       'wallet_provider_mismatch',
     )
   }
@@ -693,7 +695,7 @@ async function sendTronWalletPayment(
 
   if (!built.transaction) {
     throw new StableOpsWalletError(
-      'TRON 钱包未能创建 TRC-20 转账交易',
+      'TRON wallet failed to create TRC-20 transfer transaction',
       'tron_transaction_build_failed',
       built,
     )
@@ -707,7 +709,7 @@ async function sendTronWalletPayment(
     sent.txid ?? sent.transaction?.txID ?? getTronSignedTransactionId(signed)
   if (!txHash) {
     throw new StableOpsWalletError(
-      'TRON 钱包未返回交易哈希',
+      'TRON wallet did not return a transaction hash',
       'wallet_transaction_hash_not_found',
       sent,
     )
@@ -806,8 +808,8 @@ async function sendSolanaWalletPayment(
     ),
   )
 
-  // preferLocalSend：调用方显式指定了 RPC/connection（如 playground 走 devnet）时，锁定到该
-  // cluster 自行广播，而不是交给钱包用其当前选中网络提交——见 sendSolanaTransaction 的说明。
+  // When the caller explicitly provides an RPC/connection (e.g. playground on devnet), lock to that
+  // cluster and broadcast locally instead of letting the wallet submit on its currently selected network — see sendSolanaTransaction docs.
   const txHash = await sendSolanaTransaction(
     provider,
     connection,
@@ -880,7 +882,7 @@ async function requestFirstEvmAccount(
   const first = accounts[0]
   if (!first) {
     throw new StableOpsWalletError(
-      '钱包未返回可用账户',
+      'Wallet did not return an available account',
       'wallet_account_not_found',
     )
   }
@@ -914,7 +916,7 @@ function requireInstruction(
 ): WalletPaymentInstruction {
   if (!instruction) {
     throw new StableOpsWalletError(
-      '订单还没有可支付的链上收款指令',
+      'No payable on-chain payment instruction found for this order',
       'payment_instruction_not_found',
     )
   }
@@ -930,7 +932,7 @@ function resolveChainConfig(
   const config = overrides?.[chain] ?? EvmWalletChainConfigs[chain]
   if (!config) {
     throw new StableOpsWalletError(
-      '未找到钱包切链配置',
+      'No chain-switching configuration found for this wallet',
       'chain_config_not_found',
       { chain },
     )
@@ -981,7 +983,7 @@ function getTronWeb(provider: WalletProvider): TronWebLike {
   ].find(isReadyTronWeb)
   if (!tronWeb) {
     throw new StableOpsWalletError(
-      'TRON 支付需要 TronLink / TronWeb 钱包 provider',
+      'TRON payments require a TronLink / TronWeb wallet provider',
       'wallet_provider_mismatch',
     )
   }
@@ -1079,7 +1081,7 @@ async function requestSolanaPublicKey(
   const publicKey = connectedKey ?? providerKey
   if (!publicKey) {
     throw new StableOpsWalletError(
-      'Solana 钱包未返回可用账户',
+      'Solana wallet did not return an available account',
       'wallet_account_not_found',
     )
   }
@@ -1092,10 +1094,10 @@ async function sendSolanaTransaction(
   transaction: Transaction,
   preferLocalSend: boolean,
 ): Promise<string> {
-  // signAndSendTransaction 会用钱包当前选中的网络（Phantom 默认主网）的 RPC 提交交易；当调用方
-  // 显式给了 connection / RPC（例如 playground 指定 devnet）时，blockhash 与代币账户都在目标
-  // cluster 上，交给钱包发往主网会模拟失败、抛出含糊的 "Unexpected error"。此时改为「仅签名 +
-  // 自有 connection 广播」，把交易锁定到指定 cluster。
+  // signAndSendTransaction submits via the wallet's currently selected network (Phantom defaults to mainnet).
+  // When the caller explicitly provides a connection / RPC (e.g. playground on devnet), the blockhash and
+  // token accounts are on the target cluster — sending via wallet to mainnet would fail simulation with a
+  // vague "Unexpected error". Instead, use "sign-only + local broadcast" to pin the tx to the target cluster.
   if (preferLocalSend && typeof provider.signTransaction === 'function') {
     walletDebug('solana:send-via', { method: 'signTransaction+localBroadcast' })
     const signed = await provider.signTransaction(transaction)
@@ -1108,7 +1110,7 @@ async function sendSolanaTransaction(
     const signature = typeof result === 'string' ? result : result.signature
     if (!signature) {
       throw new StableOpsWalletError(
-        'Solana 钱包未返回交易签名',
+        'Solana wallet did not return a transaction signature',
         'wallet_transaction_hash_not_found',
         result,
       )
@@ -1118,7 +1120,7 @@ async function sendSolanaTransaction(
 
   if (typeof provider.signTransaction !== 'function') {
     throw new StableOpsWalletError(
-      'Solana 支付需要钱包支持 signAndSendTransaction 或 signTransaction',
+      'Solana payments require the wallet to support signAndSendTransaction or signTransaction',
       'wallet_provider_mismatch',
     )
   }
@@ -1139,7 +1141,7 @@ function publicKeyFromString(web3: SolanaWeb3, address: string): PublicKey {
     return new web3.PublicKey(address)
   } catch (err) {
     throw new StableOpsWalletError(
-      'Solana 地址格式无效',
+      'Invalid Solana address format',
       'invalid_solana_address',
       { address, cause: err },
     )
@@ -1220,7 +1222,7 @@ function writeBigUInt64LE(
   offset: number,
 ): void {
   if (value > 0xffffffffffffffffn) {
-    throw new StableOpsWalletError('转账金额超出 u64 范围', 'invalid_amount', {
+    throw new StableOpsWalletError('Transfer amount exceeds u64 range', 'invalid_amount', {
       amountUnits: value.toString(),
     })
   }
@@ -1233,7 +1235,7 @@ function writeBigUInt64LE(
 
 function normalizeEvmAddress(address: string): string {
   if (!/^0x[0-9a-fA-F]{40}$/u.test(address)) {
-    throw new StableOpsWalletError('EVM 地址格式无效', 'invalid_evm_address', {
+    throw new StableOpsWalletError('Invalid EVM address format', 'invalid_evm_address', {
       address,
     })
   }
@@ -1241,8 +1243,9 @@ function normalizeEvmAddress(address: string): string {
 }
 
 const TRON_ADDRESS_REGEX = /^T[1-9A-HJ-NP-Za-km-z]{33}$/u
-// tron_requestAccounts 返回后 TronLink 并不会同步写好 defaultAddress：base58 会短暂保持为
-// false / 空，立即读取会拿到非法值。这里给一个短的就绪轮询预算。
+// After tron_requestAccounts returns, TronLink does not synchronously write defaultAddress:
+// base58 briefly stays false / empty — reading it immediately yields an invalid value.
+// Give it a short polling budget to become ready.
 const TRON_ADDRESS_READY_TIMEOUT_MS = 3_000
 const TRON_ADDRESS_POLL_INTERVAL_MS = 150
 
@@ -1267,8 +1270,9 @@ function resolveTronDefaultAddressBase58(tronWeb: TronWebLike): string | undefin
   }
 }
 
-// 解析 TRON 付款方地址：调用方显式传入则直接校验；否则等待 TronLink 把 defaultAddress 写好
-// 再取，避免在授权刚返回的窗口内读到 false 而误报「地址格式无效」。
+// Resolve the TRON sender address: if the caller provides one explicitly, validate and return it;
+// otherwise wait for TronLink to populate defaultAddress, avoiding false reports of "invalid address"
+// when reading during the brief window after authorization.
 async function resolveTronFromAddress(
   provider: WalletProvider,
   tronWeb: TronWebLike,
@@ -1286,17 +1290,17 @@ async function resolveTronFromAddress(
   }
   while (!base58 && Date.now() < deadline) {
     await delay(TRON_ADDRESS_POLL_INTERVAL_MS)
-    // TronLink 授权完成后可能替换全局 tronWeb 对象，重新读取以获取最新引用
+    // TronLink may replace the global tronWeb object after authorization; re-read to get the latest reference
     try {
       current = getTronWeb(provider)
     } catch {
-      // 尚未就绪，继续等待
+      // Not ready yet, keep waiting
     }
     base58 = resolveTronDefaultAddressBase58(current)
   }
   if (!base58) {
     throw new StableOpsWalletError(
-      'TRON 钱包地址未就绪，请确保已在 TronLink 中授权连接并解锁钱包',
+      'TRON wallet address is not ready; please ensure TronLink is authorized and unlocked',
       'tron_address_not_ready',
     )
   }
@@ -1310,7 +1314,7 @@ function delay(ms: number): Promise<void> {
 function normalizeTronAddress(address: string | undefined): string {
   if (!address || !TRON_ADDRESS_REGEX.test(address)) {
     throw new StableOpsWalletError(
-      'TRON 地址格式无效',
+      'Invalid TRON address format',
       'invalid_tron_address',
       { address },
     )
