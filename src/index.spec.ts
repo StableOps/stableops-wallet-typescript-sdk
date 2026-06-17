@@ -1,14 +1,17 @@
 import { PublicKey, Transaction } from '@solana/web3.js'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   EvmWalletChainConfigs,
   StableOpsWalletError,
   encodeErc20Transfer,
+  getInjectedTronProvider,
+  isWalletSdkDebugEnabled,
   parseTokenAmount,
   selectWalletPaymentInstruction,
   sendOrderWalletPayment,
   sendWalletPayment,
+  setWalletSdkDebug,
   type Eip1193Provider,
   type SolanaWalletProvider,
 } from './index'
@@ -194,6 +197,95 @@ describe('sendWalletPayment', () => {
     expect(provider.calls).toEqual(['tron_requestAccounts', 'triggerSmartContract', 'sign', 'sendRawTransaction'])
   })
 
+  it('TronLink 授权后 defaultAddress 延迟就绪时轮询等待而非误报地址无效', async () => {
+    // 复刻 TronLink 真机行为：tron_requestAccounts 返回时 base58 仍为 false，稍后才写好。
+    const tronWeb = {
+      defaultAddress: { base58: false as string | false },
+      transactionBuilder: {
+        triggerSmartContract: async () => ({ transaction: { raw_data: {} } }),
+      },
+      trx: {
+        sign: async (transaction: unknown) => ({ transaction, txID: 'TRON_TX_ID' }),
+        sendRawTransaction: async () => ({ result: true, txid: 'TRON_TX_HASH' }),
+      },
+    }
+    const provider = {
+      tronWeb,
+      tronLink: {
+        request: async <T>(args: { method: string }) => {
+          if (args.method === 'tron_requestAccounts') {
+            // 授权返回后异步写入地址（早于轮询预算到期）。
+            setTimeout(() => {
+              tronWeb.defaultAddress.base58 = 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R'
+            }, 50)
+          }
+          return { code: 200 } as T
+        },
+      },
+    }
+
+    const result = await sendWalletPayment({
+      provider,
+      amount: '1',
+      instruction: {
+        chain: 'tron',
+        asset: 'USDT',
+        address: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN',
+      },
+    })
+
+    expect(result.fromAddress).toBe('TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R')
+    expect(result.txHash).toBe('TRON_TX_HASH')
+  })
+
+  it('TronLink 只暴露 defaultAddress.hex 时转换为 base58 付款方地址', async () => {
+    const calls: string[] = []
+    const tronWeb = {
+      defaultAddress: {
+        base58: false as string | false,
+        hex: '4146f1eaa1d7c4a4e4f9923a24dd8a69a2b4e7f3ab',
+      },
+      address: {
+        fromHex: (hex: string) => {
+          calls.push(`fromHex:${hex}`)
+          return 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R'
+        },
+      },
+      transactionBuilder: {
+        triggerSmartContract: async (
+          _contractAddress: string,
+          _functionSelector: string,
+          _options: Record<string, unknown>,
+          _parameters: Array<{ type: string; value: string | bigint }>,
+          issuerAddress?: string,
+        ) => {
+          calls.push(`issuer:${issuerAddress ?? ''}`)
+          return { transaction: { raw_data: {} } }
+        },
+      },
+      trx: {
+        sign: async (transaction: unknown) => ({ transaction, txID: 'TRON_TX_ID' }),
+        sendRawTransaction: async () => ({ result: true, txid: 'TRON_TX_HASH' }),
+      },
+    }
+
+    const result = await sendWalletPayment({
+      provider: { tronWeb },
+      amount: '1',
+      instruction: {
+        chain: 'tron-nile',
+        asset: 'USDT',
+        address: 'TBpYsqR9qpFT8m36GBH572TSu4phguFfz1',
+      },
+    })
+
+    expect(result.fromAddress).toBe('TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R')
+    expect(calls).toEqual([
+      'fromHex:4146f1eaa1d7c4a4e4f9923a24dd8a69a2b4e7f3ab',
+      'issuer:TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
+    ])
+  })
+
   it('通过 Solana wallet adapter 发起 SPL Token 转账', async () => {
     const provider = new MockSolanaProvider()
     const recipient = 'So11111111111111111111111111111111111111112'
@@ -224,6 +316,47 @@ describe('sendWalletPayment', () => {
     expect(provider.signedTransaction?.instructions[1]?.programId.toBase58()).toBe(
       'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
     )
+  })
+
+  it('显式指定 connection 时优先 signTransaction 并自行广播到目标 cluster', async () => {
+    // 模拟 Phantom 这类同时支持 signAndSendTransaction 与 signTransaction 的钱包：
+    // 给了 devnet connection 后应走「仅签名 + 自有 connection 广播」，避免钱包用其选中网络（默认主网）提交。
+    const calls: string[] = []
+    const provider: SolanaWalletProvider = {
+      publicKey: new PublicKey('11111111111111111111111111111112'),
+      async signAndSendTransaction() {
+        calls.push('signAndSendTransaction')
+        return { signature: 'WALLET_NETWORK_SIGNATURE' }
+      },
+      async signTransaction(_transaction: Transaction) {
+        calls.push('signTransaction')
+        // 桩：真机由钱包私钥签名；这里只需返回可 serialize 的对象供本地广播。
+        return { serialize: () => new Uint8Array([1, 2, 3]) } as unknown as Transaction
+      },
+    }
+    const devnetConnection = {
+      async getLatestBlockhash() {
+        return { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1 }
+      },
+      async sendRawTransaction() {
+        calls.push('sendRawTransaction')
+        return 'DEVNET_SIGNATURE'
+      },
+    }
+
+    const result = await sendWalletPayment({
+      provider,
+      amount: '1',
+      solanaConnection: devnetConnection,
+      instruction: {
+        chain: 'solana-devnet',
+        asset: 'USDC',
+        address: 'So11111111111111111111111111111111111111112',
+      },
+    })
+
+    expect(result.txHash).toBe('DEVNET_SIGNATURE')
+    expect(calls).toEqual(['signTransaction', 'sendRawTransaction'])
   })
 
   it('拒绝链与资产不匹配的支付指令', async () => {
@@ -277,6 +410,114 @@ describe('多候选订单支付', () => {
   })
 })
 
+describe('注入钱包 provider', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis, 'tronLink')
+    Reflect.deleteProperty(globalThis, 'tronWeb')
+  })
+
+  it('TRON 优先使用 tronLink.tronWeb，避免读取到未就绪的 window.tronWeb', () => {
+    const staleTronWeb = {
+      defaultAddress: { base58: false as string | false },
+      transactionBuilder: { triggerSmartContract: async () => ({ transaction: {} }) },
+      trx: {
+        sign: async (transaction: unknown) => transaction,
+        sendRawTransaction: async () => ({ txid: 'STALE' }),
+      },
+    }
+    const readyTronWeb = {
+      defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
+      transactionBuilder: { triggerSmartContract: async () => ({ transaction: {} }) },
+      trx: {
+        sign: async (transaction: unknown) => transaction,
+        sendRawTransaction: async () => ({ txid: 'READY' }),
+      },
+    }
+    Object.assign(globalThis, {
+      tronWeb: staleTronWeb,
+      tronLink: {
+        tronWeb: readyTronWeb,
+        request: async () => ({ code: 200 }),
+      },
+    })
+
+    const provider = getInjectedTronProvider()
+
+    expect((provider as { tronWeb?: unknown } | undefined)?.tronWeb).toBe(readyTronWeb)
+  })
+
+  it('TRON 仅注入 tronLink.request 时仍注册 provider，等待授权后读取 tronWeb', async () => {
+    const readyTronWeb = {
+      defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
+      transactionBuilder: {
+        triggerSmartContract: async () => ({ transaction: { raw_data: {} } }),
+      },
+      trx: {
+        sign: async (transaction: unknown) => ({ transaction, txID: 'TRON_TX_ID' }),
+        sendRawTransaction: async () => ({ txid: 'TRON_TX_HASH' }),
+      },
+    }
+    const tronLink = {
+      request: async () => {
+        Object.assign(tronLink, { tronWeb: readyTronWeb })
+        return { code: 200 }
+      },
+    }
+    Object.assign(globalThis, { tronLink })
+
+    const provider = getInjectedTronProvider()
+
+    expect(provider).toBeDefined()
+    const result = await sendWalletPayment({
+      provider: provider as NonNullable<typeof provider>,
+      amount: '1',
+      instruction: {
+        chain: 'tron-nile',
+        asset: 'USDT',
+        address: 'TBpYsqR9qpFT8m36GBH572TSu4phguFfz1',
+      },
+    })
+    expect(result.txHash).toBe('TRON_TX_HASH')
+  })
+
+  it('TRON 授权返回后延迟注入 window.tronWeb 时等待 provider 就绪', async () => {
+    const readyTronWeb = {
+      defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
+      transactionBuilder: {
+        triggerSmartContract: async () => ({ transaction: { raw_data: {} } }),
+      },
+      trx: {
+        sign: async (transaction: unknown) => ({ transaction, txID: 'TRON_TX_ID' }),
+        sendRawTransaction: async () => ({ txid: 'TRON_TX_HASH' }),
+      },
+    }
+    Object.assign(globalThis, {
+      tronLink: {
+        request: async () => {
+          setTimeout(() => {
+            Object.assign(globalThis, { tronWeb: readyTronWeb })
+          }, 50)
+          return { code: 200 }
+        },
+      },
+    })
+
+    const provider = getInjectedTronProvider()
+
+    expect(provider).toBeDefined()
+    const result = await sendWalletPayment({
+      provider: provider as NonNullable<typeof provider>,
+      amount: '1',
+      instruction: {
+        chain: 'tron-nile',
+        asset: 'USDT',
+        address: 'TE9mRnhfxMe86fFVrCRtEfXukqMvRVfq9A',
+      },
+    })
+    expect(result.txHash).toBe('TRON_TX_HASH')
+  })
+})
+
 describe('测试网钱包支持', () => {
   it('新 EVM 测试网有切链配置（eip155 正确）', () => {
     expect(EvmWalletChainConfigs['ethereum-sepolia'].eip155ChainId).toBe(11155111)
@@ -302,5 +543,41 @@ describe('测试网钱包支持', () => {
       expect(code).not.toBe('unsupported_chain')
       expect(code).not.toBe('token_contract_not_found')
     }
+  })
+})
+
+describe('debug 开关', () => {
+  afterEach(() => {
+    setWalletSdkDebug(false)
+    vi.restoreAllMocks()
+  })
+
+  it('setWalletSdkDebug 控制 isWalletSdkDebugEnabled', () => {
+    setWalletSdkDebug(true)
+    expect(isWalletSdkDebugEnabled()).toBe(true)
+    setWalletSdkDebug(false)
+    expect(isWalletSdkDebugEnabled()).toBe(false)
+  })
+
+  it('关闭时不打日志，开启时输出带 [wallet-sdk] 前缀的日志', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    setWalletSdkDebug(false)
+    await sendWalletPayment({
+      provider: new MockEvmProvider(),
+      amount: '1',
+      instruction: { chain: 'base', asset: 'USDC', address: '0x2222222222222222222222222222222222222222' },
+    })
+    expect(spy).not.toHaveBeenCalled()
+
+    setWalletSdkDebug(true)
+    await sendWalletPayment({
+      provider: new MockEvmProvider(),
+      amount: '1',
+      instruction: { chain: 'base', asset: 'USDC', address: '0x2222222222222222222222222222222222222222' },
+    })
+    expect(spy).toHaveBeenCalled()
+    expect(spy.mock.calls.every(([first]) => String(first).startsWith('[wallet-sdk] '))).toBe(true)
+    expect(spy.mock.calls.some(([first]) => first === '[wallet-sdk] sendWalletPayment:start')).toBe(true)
   })
 })

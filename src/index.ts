@@ -41,7 +41,10 @@ export type ChainId =
 
 export type Asset = 'USDC' | 'USDT'
 
-type EvmWalletChainId = Exclude<ChainId, 'tron' | 'solana' | 'tron-nile' | 'solana-devnet'>
+type EvmWalletChainId = Exclude<
+  ChainId,
+  'tron' | 'solana' | 'tron-nile' | 'solana-devnet'
+>
 
 type WalletTokenContract = {
   chain: ChainId
@@ -151,34 +154,59 @@ const TRON_WALLET_CHAINS = ['tron', 'tron-nile'] as const
 const SOLANA_WALLET_CHAINS = ['solana', 'solana-devnet'] as const
 const ERC20_TRANSFER_SELECTOR = 'a9059cbb'
 const SOLANA_MAINNET_RPC_URL = 'https://api.mainnet-beta.solana.com'
-const SOLANA_TOKEN_PROGRAM_ID_BASE58 = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58 = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
+const SOLANA_TOKEN_PROGRAM_ID_BASE58 =
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58 =
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
 const SOLANA_TRANSFER_CHECKED_INSTRUCTION = 12
 const SOLANA_CREATE_ASSOCIATED_TOKEN_ACCOUNT_IDEMPOTENT_INSTRUCTION = 1
 
 export type Eip1193Provider = {
-  request<T = unknown>(args: { method: string; params?: unknown[] | Record<string, unknown> }): Promise<T>
+  request<T = unknown>(args: {
+    method: string
+    params?: unknown[] | Record<string, unknown>
+  }): Promise<T>
 }
 
 export type TronWalletProvider =
   | TronWebLike
   | {
       tronWeb?: TronWebLike
-      tronLink?: { request: <T = unknown>(args: { method: string; params?: unknown }) => Promise<T> }
-      request?<T = unknown>(args: { method: string; params?: unknown }): Promise<T>
+      tronLink?: {
+        tronWeb?: TronWebLike
+        request: <T = unknown>(args: {
+          method: string
+          params?: unknown
+        }) => Promise<T>
+      }
+      request?<T = unknown>(args: {
+        method: string
+        params?: unknown
+      }): Promise<T>
     }
 
 export type SolanaWalletProvider = {
   publicKey?: SolanaPublicKeyLike | string | null
-  connect?(): Promise<{ publicKey?: SolanaPublicKeyLike | string | null } | void>
-  signAndSendTransaction?(transaction: Transaction): Promise<string | { signature?: string }>
+  connect?(): Promise<{
+    publicKey?: SolanaPublicKeyLike | string | null
+  } | void>
+  signAndSendTransaction?(
+    transaction: Transaction,
+  ): Promise<string | { signature?: string }>
   signTransaction?(transaction: Transaction): Promise<Transaction>
 }
 
-export type WalletProvider = Eip1193Provider | TronWalletProvider | SolanaWalletProvider
+export type WalletProvider =
+  | Eip1193Provider
+  | TronWalletProvider
+  | SolanaWalletProvider
 
 type TronWebLike = {
-  defaultAddress?: { base58?: string }
+  // TronLink 未连接/未就绪时把 base58 置为 false（而非缺省），类型如实反映以便正确判定就绪。
+  defaultAddress?: { base58?: string | false; hex?: string | false }
+  address?: {
+    fromHex?(address: string): string
+  }
   transactionBuilder: {
     triggerSmartContract(
       contractAddress: string,
@@ -186,11 +214,18 @@ type TronWebLike = {
       options: Record<string, unknown>,
       parameters: Array<{ type: string; value: string | bigint }>,
       issuerAddress?: string,
-    ): Promise<{ transaction?: unknown; result?: { result?: boolean; message?: string } }>
+    ): Promise<{
+      transaction?: unknown
+      result?: { result?: boolean; message?: string }
+    }>
   }
   trx: {
     sign(transaction: unknown): Promise<unknown>
-    sendRawTransaction(transaction: unknown): Promise<{ txid?: string; transaction?: { txID?: string }; result?: boolean }>
+    sendRawTransaction(transaction: unknown): Promise<{
+      txid?: string
+      transaction?: { txID?: string }
+      result?: boolean
+    }>
   }
 }
 
@@ -223,12 +258,20 @@ export type SendWalletPaymentInput = {
   fromAddress?: string
   chainConfigs?: Partial<Record<EvmWalletChainId, EvmWalletChainConfig>>
   solanaRpcUrl?: string
-  solanaConnection?: Pick<Connection, 'getLatestBlockhash' | 'sendRawTransaction'>
+  solanaConnection?: Pick<
+    Connection,
+    'getLatestBlockhash' | 'sendRawTransaction'
+  >
 }
 
-export type WalletProviderByChain = Partial<Record<ChainId, WalletProvider | undefined>>
+export type WalletProviderByChain = Partial<
+  Record<ChainId, WalletProvider | undefined>
+>
 
-export type SendOrderWalletPaymentInput = Omit<SendWalletPaymentInput, 'provider' | 'instruction' | 'amount'> & {
+export type SendOrderWalletPaymentInput = Omit<
+  SendWalletPaymentInput,
+  'provider' | 'instruction' | 'amount'
+> & {
   order: WalletPaymentOrder
   providers: WalletProviderByChain
   preferredChains?: ChainId[]
@@ -256,7 +299,44 @@ export class StableOpsWalletError extends Error {
   }
 }
 
-export const EvmWalletChainConfigs: Readonly<Record<EvmWalletChainId, EvmWalletChainConfig>> = {
+// ── Debug ──────────────────────────────────────────────────────────────────
+// 模块级 debug 开关：默认关，关闭时所有 walletDebug() 调用是零开销 no-op。
+// 开启方式（任一）：
+//   1) setWalletSdkDebug(true)（代码里显式打开/关闭）
+//   2) 全局 globalThis.STABLEOPS_WALLET_DEBUG = true（浏览器控制台即可临时打开）
+//   3) 环境变量 WALLET_SDK_DEBUG=1 / true（Node / 打包注入）
+// 优先级：setWalletSdkDebug 一旦被显式调用即以它为准，否则回落到全局/环境兜底。
+let moduleDebug: boolean | undefined
+
+export function setWalletSdkDebug(enabled: boolean): void {
+  moduleDebug = enabled
+}
+
+export function isWalletSdkDebugEnabled(): boolean {
+  if (typeof moduleDebug === 'boolean') return moduleDebug
+  const scope = globalThis as {
+    STABLEOPS_WALLET_DEBUG?: unknown
+    process?: { env?: Record<string, string | undefined> }
+  }
+  const flag = scope.STABLEOPS_WALLET_DEBUG
+  if (flag === true || flag === 'true' || flag === '1') return true
+  const env = scope.process?.env?.WALLET_SDK_DEBUG
+  return env === '1' || env === 'true'
+}
+
+// 统一日志出口：带 [wallet-sdk] 前缀，浏览器与 Node 控制台均可读；关闭时直接返回不计算参数开销。
+function walletDebug(event: string, data?: Record<string, unknown>): void {
+  if (!isWalletSdkDebugEnabled()) return
+  if (data !== undefined) {
+    console.log(`[wallet-sdk] ${event}`, data)
+  } else {
+    console.log(`[wallet-sdk] ${event}`)
+  }
+}
+
+export const EvmWalletChainConfigs: Readonly<
+  Record<EvmWalletChainId, EvmWalletChainConfig>
+> = {
   ethereum: {
     chainId: 'ethereum',
     eip155ChainId: 1,
@@ -324,17 +404,26 @@ export const EvmWalletChainConfigs: Readonly<Record<EvmWalletChainId, EvmWalletC
 }
 
 export function getInjectedEthereumProvider(): Eip1193Provider | undefined {
-  const maybeGlobal = globalThis as typeof globalThis & { ethereum?: Eip1193Provider }
+  const maybeGlobal = globalThis as typeof globalThis & {
+    ethereum?: Eip1193Provider
+  }
   return maybeGlobal.ethereum
 }
 
 export function getInjectedTronProvider(): TronWalletProvider | undefined {
   const maybeGlobal = globalThis as typeof globalThis & {
-    tronLink?: { request: <T = unknown>(args: { method: string; params?: unknown }) => Promise<T> }
+    tronLink?: {
+      tronWeb?: TronWebLike
+      request: <T = unknown>(args: {
+        method: string
+        params?: unknown
+      }) => Promise<T>
+    }
     tronWeb?: TronWebLike
   }
-  if (!maybeGlobal.tronWeb) return undefined
-  return { tronLink: maybeGlobal.tronLink, tronWeb: maybeGlobal.tronWeb }
+  const tronWeb = maybeGlobal.tronLink?.tronWeb ?? maybeGlobal.tronWeb
+  if (!tronWeb && !maybeGlobal.tronLink?.request) return undefined
+  return { tronLink: maybeGlobal.tronLink, tronWeb }
 }
 
 export function getInjectedSolanaProvider(): SolanaWalletProvider | undefined {
@@ -368,22 +457,38 @@ export function selectWalletPaymentInstruction(
   preferredChains: readonly ChainId[] = [],
 ): { instruction: WalletPaymentInstruction; provider: WalletProvider } {
   if (instructions.length === 0) {
-    throw new StableOpsWalletError('订单还没有可支付的链上收款指令', 'payment_instruction_not_found')
+    throw new StableOpsWalletError(
+      '订单还没有可支付的链上收款指令',
+      'payment_instruction_not_found',
+    )
   }
   const preferred = preferredChains
-    .map((chain) => instructions.find((instruction) => instruction.chain === chain))
-    .filter((instruction): instruction is WalletPaymentInstruction => Boolean(instruction))
-  const candidates = [...preferred, ...instructions.filter((instruction) => !preferred.includes(instruction))]
+    .map((chain) =>
+      instructions.find((instruction) => instruction.chain === chain),
+    )
+    .filter((instruction): instruction is WalletPaymentInstruction =>
+      Boolean(instruction),
+    )
+  const candidates = [
+    ...preferred,
+    ...instructions.filter((instruction) => !preferred.includes(instruction)),
+  ]
   for (const instruction of candidates) {
     const provider = providers[instruction.chain]
     if (provider) return { instruction, provider }
   }
-  throw new StableOpsWalletError('未找到订单候选链对应的钱包 provider', 'wallet_provider_not_found', {
-    chains: instructions.map((instruction) => instruction.chain),
-  })
+  throw new StableOpsWalletError(
+    '未找到订单候选链对应的钱包 provider',
+    'wallet_provider_not_found',
+    {
+      chains: instructions.map((instruction) => instruction.chain),
+    },
+  )
 }
 
-export async function sendOrderWalletPayment(input: SendOrderWalletPaymentInput): Promise<SentWalletPayment> {
+export async function sendOrderWalletPayment(
+  input: SendOrderWalletPaymentInput,
+): Promise<SentWalletPayment> {
   const selected = selectWalletPaymentInstruction(
     input.order.paymentInstructions,
     input.providers,
@@ -397,59 +502,116 @@ export async function sendOrderWalletPayment(input: SendOrderWalletPaymentInput)
   })
 }
 
-export async function sendWalletPayment(input: SendWalletPaymentInput): Promise<SentWalletPayment> {
+export async function sendWalletPayment(
+  input: SendWalletPaymentInput,
+): Promise<SentWalletPayment> {
   const instruction = requireInstruction(input.instruction)
   const token = findWalletTokenContract(instruction.chain, instruction.asset)
   if (!token) {
-    throw new StableOpsWalletError('未找到该链与资产的默认代币合约', 'token_contract_not_found', {
-      chain: instruction.chain,
-      asset: instruction.asset,
-    })
+    throw new StableOpsWalletError(
+      '未找到该链与资产的默认代币合约',
+      'token_contract_not_found',
+      {
+        chain: instruction.chain,
+        asset: instruction.asset,
+      },
+    )
   }
 
-  if (isEvmWalletChain(instruction.chain)) {
-    return sendEvmWalletPayment(input, { ...instruction, chain: instruction.chain }, token)
+  walletDebug('sendWalletPayment:start', {
+    chain: instruction.chain,
+    asset: instruction.asset,
+    amount: input.amount,
+    toAddress: instruction.address,
+    tokenContract: token.address,
+    decimals: token.decimals,
+  })
+
+  try {
+    let sent: SentWalletPayment
+    if (isEvmWalletChain(instruction.chain)) {
+      sent = await sendEvmWalletPayment(
+        input,
+        { ...instruction, chain: instruction.chain },
+        token,
+      )
+    } else if (isTronWalletChain(instruction.chain)) {
+      sent = await sendTronWalletPayment(input, instruction, token)
+    } else if (isSolanaWalletChain(instruction.chain)) {
+      sent = await sendSolanaWalletPayment(input, instruction, token)
+    } else {
+      throw new StableOpsWalletError(
+        '当前钱包 SDK 不支持该链',
+        'unsupported_chain',
+        {
+          chain: instruction.chain,
+        },
+      )
+    }
+    walletDebug('sendWalletPayment:sent', {
+      chain: sent.chain,
+      txHash: sent.txHash,
+      fromAddress: sent.fromAddress,
+    })
+    return sent
+  } catch (err) {
+    walletDebug('sendWalletPayment:error', {
+      chain: instruction.chain,
+      code: err instanceof StableOpsWalletError ? err.code : undefined,
+      message: err instanceof Error ? err.message : String(err),
+    })
+    throw err
   }
-  if (isTronWalletChain(instruction.chain)) {
-    return sendTronWalletPayment(input, instruction, token)
-  }
-  if (isSolanaWalletChain(instruction.chain)) {
-    return sendSolanaWalletPayment(input, instruction, token)
-  }
-  throw new StableOpsWalletError('当前钱包 SDK 不支持该链', 'unsupported_chain', { chain: instruction.chain })
 }
 
-export function encodeErc20Transfer(toAddress: string, amountUnits: bigint): string {
+export function encodeErc20Transfer(
+  toAddress: string,
+  amountUnits: bigint,
+): string {
   const normalizedTo = normalizeEvmAddress(toAddress)
   if (amountUnits < 0n) {
-    throw new StableOpsWalletError('转账金额不能为负数', 'invalid_amount', { amountUnits: amountUnits.toString() })
+    throw new StableOpsWalletError('转账金额不能为负数', 'invalid_amount', {
+      amountUnits: amountUnits.toString(),
+    })
   }
   return `0x${ERC20_TRANSFER_SELECTOR}${padHex(normalizedTo.slice(2))}${padHex(amountUnits.toString(16))}`
 }
 
 export function parseTokenAmount(amount: string, decimals: number): bigint {
   if (!Number.isInteger(decimals) || decimals < 0) {
-    throw new StableOpsWalletError('代币精度配置无效', 'invalid_decimals', { decimals })
+    throw new StableOpsWalletError('代币精度配置无效', 'invalid_decimals', {
+      decimals,
+    })
   }
 
   const trimmed = amount.trim()
   const match = /^(\d+)(?:\.(\d+))?$/u.exec(trimmed)
   if (!match) {
-    throw new StableOpsWalletError('转账金额格式无效', 'invalid_amount', { amount })
+    throw new StableOpsWalletError('转账金额格式无效', 'invalid_amount', {
+      amount,
+    })
   }
 
   const whole = match[1]
   const fraction = match[2] ?? ''
   if (fraction.length > decimals) {
-    throw new StableOpsWalletError('转账金额小数位超过代币精度', 'amount_precision_exceeded', {
-      amount,
-      decimals,
-    })
+    throw new StableOpsWalletError(
+      '转账金额小数位超过代币精度',
+      'amount_precision_exceeded',
+      {
+        amount,
+        decimals,
+      },
+    )
   }
 
-  const units = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0')
+  const units =
+    BigInt(whole) * 10n ** BigInt(decimals) +
+    BigInt(fraction.padEnd(decimals, '0') || '0')
   if (units <= 0n) {
-    throw new StableOpsWalletError('转账金额必须大于 0', 'invalid_amount', { amount })
+    throw new StableOpsWalletError('转账金额必须大于 0', 'invalid_amount', {
+      amount,
+    })
   }
   return units
 }
@@ -461,12 +623,19 @@ async function sendEvmWalletPayment(
 ): Promise<SentWalletPayment> {
   const provider = input.provider as Eip1193Provider
   if (!isEip1193Provider(provider)) {
-    throw new StableOpsWalletError('EVM 支付需要 EIP-1193 钱包 provider', 'wallet_provider_mismatch')
+    throw new StableOpsWalletError(
+      'EVM 支付需要 EIP-1193 钱包 provider',
+      'wallet_provider_mismatch',
+    )
   }
 
   const config = resolveChainConfig(instruction.chain, input.chainConfigs)
-  const fromAddress = normalizeEvmAddress(input.fromAddress ?? (await requestFirstEvmAccount(provider)))
+  const fromAddress = normalizeEvmAddress(
+    input.fromAddress ?? (await requestFirstEvmAccount(provider)),
+  )
+  walletDebug('evm:from', { chain: instruction.chain, fromAddress })
   await ensureEvmChain(provider, config)
+  walletDebug('evm:chain-ready', { eip155ChainId: config.eip155ChainId })
 
   const amountUnits = parseTokenAmount(input.amount, token.decimals)
   const txHash = await provider.request<string>({
@@ -481,7 +650,14 @@ async function sendEvmWalletPayment(
     ],
   })
 
-  return buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits)
+  return buildSentPayment(
+    txHash,
+    instruction,
+    token,
+    fromAddress,
+    input.amount,
+    amountUnits,
+  )
 }
 
 async function sendTronWalletPayment(
@@ -489,15 +665,21 @@ async function sendTronWalletPayment(
   instruction: WalletPaymentInstruction,
   token: WalletTokenContract,
 ): Promise<SentWalletPayment> {
-  const tronWeb = getTronWeb(input.provider)
   const accountRequester = getTronAccountRequester(input.provider)
   if (accountRequester) {
+    walletDebug('tron:requestAccounts')
     await accountRequester({ method: 'tron_requestAccounts' })
   }
 
-  const fromAddress = normalizeTronAddress(input.fromAddress ?? tronWeb.defaultAddress?.base58)
+  const tronWeb = await resolveTronWeb(input.provider)
+  const fromAddress = await resolveTronFromAddress(input.provider, tronWeb, input.fromAddress)
+  walletDebug('tron:from', { fromAddress })
   const toAddress = normalizeTronAddress(instruction.address)
   const amountUnits = parseTokenAmount(input.amount, token.decimals)
+  walletDebug('tron:build', {
+    contract: token.address,
+    amountUnits: amountUnits.toString(),
+  })
   const built = await tronWeb.transactionBuilder.triggerSmartContract(
     token.address,
     'transfer(address,uint256)',
@@ -510,17 +692,35 @@ async function sendTronWalletPayment(
   )
 
   if (!built.transaction) {
-    throw new StableOpsWalletError('TRON 钱包未能创建 TRC-20 转账交易', 'tron_transaction_build_failed', built)
+    throw new StableOpsWalletError(
+      'TRON 钱包未能创建 TRC-20 转账交易',
+      'tron_transaction_build_failed',
+      built,
+    )
   }
 
+  walletDebug('tron:sign')
   const signed = await tronWeb.trx.sign(built.transaction)
+  walletDebug('tron:broadcast')
   const sent = await tronWeb.trx.sendRawTransaction(signed)
-  const txHash = sent.txid ?? sent.transaction?.txID ?? getTronSignedTransactionId(signed)
+  const txHash =
+    sent.txid ?? sent.transaction?.txID ?? getTronSignedTransactionId(signed)
   if (!txHash) {
-    throw new StableOpsWalletError('TRON 钱包未返回交易哈希', 'wallet_transaction_hash_not_found', sent)
+    throw new StableOpsWalletError(
+      'TRON 钱包未返回交易哈希',
+      'wallet_transaction_hash_not_found',
+      sent,
+    )
   }
 
-  return buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits)
+  return buildSentPayment(
+    txHash,
+    instruction,
+    token,
+    fromAddress,
+    input.amount,
+    amountUnits,
+  )
 }
 
 async function sendSolanaWalletPayment(
@@ -530,16 +730,53 @@ async function sendSolanaWalletPayment(
 ): Promise<SentWalletPayment> {
   const web3 = await loadSolanaWeb3()
   const provider = input.provider as SolanaWalletProvider
-  const payer = publicKeyFromString(web3, input.fromAddress ?? (await requestSolanaPublicKey(provider)))
+  const payer = publicKeyFromString(
+    web3,
+    input.fromAddress ?? (await requestSolanaPublicKey(provider)),
+  )
   const recipient = publicKeyFromString(web3, instruction.address)
   const mint = publicKeyFromString(web3, token.address)
   const amountUnits = parseTokenAmount(input.amount, token.decimals)
-  const connection = input.solanaConnection ?? new web3.Connection(input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL, 'confirmed')
+  const preferLocalSend = Boolean(input.solanaConnection || input.solanaRpcUrl)
+  walletDebug('solana:setup', {
+    payer: payer.toBase58(),
+    mint: mint.toBase58(),
+    amountUnits: amountUnits.toString(),
+    rpcUrl: input.solanaConnection
+      ? '(custom connection)'
+      : (input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL),
+    preferLocalSend,
+  })
+  const connection =
+    input.solanaConnection ??
+    new web3.Connection(
+      input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL,
+      'confirmed',
+    )
   const tokenProgramId = new web3.PublicKey(SOLANA_TOKEN_PROGRAM_ID_BASE58)
-  const associatedTokenProgramId = new web3.PublicKey(SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58)
-  const sourceTokenAccount = findAssociatedTokenAddress(web3, payer, mint, tokenProgramId, associatedTokenProgramId)
-  const destinationTokenAccount = findAssociatedTokenAddress(web3, recipient, mint, tokenProgramId, associatedTokenProgramId)
+  const associatedTokenProgramId = new web3.PublicKey(
+    SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58,
+  )
+  const sourceTokenAccount = findAssociatedTokenAddress(
+    web3,
+    payer,
+    mint,
+    tokenProgramId,
+    associatedTokenProgramId,
+  )
+  const destinationTokenAccount = findAssociatedTokenAddress(
+    web3,
+    recipient,
+    mint,
+    tokenProgramId,
+    associatedTokenProgramId,
+  )
+  walletDebug('solana:token-accounts', {
+    source: sourceTokenAccount.toBase58(),
+    destination: destinationTokenAccount.toBase58(),
+  })
   const latest = await connection.getLatestBlockhash()
+  walletDebug('solana:blockhash', { blockhash: latest.blockhash })
   const transaction = new web3.Transaction({
     feePayer: payer,
     recentBlockhash: latest.blockhash,
@@ -569,8 +806,22 @@ async function sendSolanaWalletPayment(
     ),
   )
 
-  const txHash = await sendSolanaTransaction(provider, connection, transaction)
-  return buildSentPayment(txHash, instruction, token, payer.toBase58(), input.amount, amountUnits)
+  // preferLocalSend：调用方显式指定了 RPC/connection（如 playground 走 devnet）时，锁定到该
+  // cluster 自行广播，而不是交给钱包用其当前选中网络提交——见 sendSolanaTransaction 的说明。
+  const txHash = await sendSolanaTransaction(
+    provider,
+    connection,
+    transaction,
+    preferLocalSend,
+  )
+  return buildSentPayment(
+    txHash,
+    instruction,
+    token,
+    payer.toBase58(),
+    input.amount,
+    amountUnits,
+  )
 }
 
 function buildSentPayment(
@@ -605,24 +856,41 @@ function isSolanaWalletChain(chain: ChainId): boolean {
   return (SOLANA_WALLET_CHAINS as readonly string[]).includes(chain)
 }
 
-function findWalletTokenContract(chain: ChainId, asset: Asset): WalletTokenContract | undefined {
-  return WALLET_TOKEN_CONTRACTS.find((entry) => entry.chain === chain && entry.asset === asset)
+function findWalletTokenContract(
+  chain: ChainId,
+  asset: Asset,
+): WalletTokenContract | undefined {
+  return WALLET_TOKEN_CONTRACTS.find(
+    (entry) => entry.chain === chain && entry.asset === asset,
+  )
 }
 
-function isEip1193Provider(provider: WalletProvider): provider is Eip1193Provider {
+function isEip1193Provider(
+  provider: WalletProvider,
+): provider is Eip1193Provider {
   return typeof (provider as Eip1193Provider).request === 'function'
 }
 
-async function requestFirstEvmAccount(provider: Eip1193Provider): Promise<string> {
-  const accounts = await provider.request<string[]>({ method: 'eth_requestAccounts' })
+async function requestFirstEvmAccount(
+  provider: Eip1193Provider,
+): Promise<string> {
+  const accounts = await provider.request<string[]>({
+    method: 'eth_requestAccounts',
+  })
   const first = accounts[0]
   if (!first) {
-    throw new StableOpsWalletError('钱包未返回可用账户', 'wallet_account_not_found')
+    throw new StableOpsWalletError(
+      '钱包未返回可用账户',
+      'wallet_account_not_found',
+    )
   }
   return first
 }
 
-async function ensureEvmChain(provider: Eip1193Provider, config: EvmWalletChainConfig): Promise<void> {
+async function ensureEvmChain(
+  provider: Eip1193Provider,
+  config: EvmWalletChainConfig,
+): Promise<void> {
   try {
     await provider.request({
       method: 'wallet_switchEthereumChain',
@@ -630,7 +898,10 @@ async function ensureEvmChain(provider: Eip1193Provider, config: EvmWalletChainC
     })
   } catch (err) {
     if (!isUnknownChainError(err)) throw err
-    await provider.request({ method: 'wallet_addEthereumChain', params: [toWalletAddChainParams(config)] })
+    await provider.request({
+      method: 'wallet_addEthereumChain',
+      params: [toWalletAddChainParams(config)],
+    })
     await provider.request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: toHexChainId(config.eip155ChainId) }],
@@ -638,20 +909,31 @@ async function ensureEvmChain(provider: Eip1193Provider, config: EvmWalletChainC
   }
 }
 
-function requireInstruction(instruction: WalletPaymentInstruction | null): WalletPaymentInstruction {
+function requireInstruction(
+  instruction: WalletPaymentInstruction | null,
+): WalletPaymentInstruction {
   if (!instruction) {
-    throw new StableOpsWalletError('订单还没有可支付的链上收款指令', 'payment_instruction_not_found')
+    throw new StableOpsWalletError(
+      '订单还没有可支付的链上收款指令',
+      'payment_instruction_not_found',
+    )
   }
   return instruction
 }
 
 function resolveChainConfig(
   chain: EvmWalletChainId,
-  overrides: Partial<Record<EvmWalletChainId, EvmWalletChainConfig>> | undefined,
+  overrides:
+    | Partial<Record<EvmWalletChainId, EvmWalletChainConfig>>
+    | undefined,
 ): EvmWalletChainConfig {
   const config = overrides?.[chain] ?? EvmWalletChainConfigs[chain]
   if (!config) {
-    throw new StableOpsWalletError('未找到钱包切链配置', 'chain_config_not_found', { chain })
+    throw new StableOpsWalletError(
+      '未找到钱包切链配置',
+      'chain_config_not_found',
+      { chain },
+    )
   }
   return config
 }
@@ -682,26 +964,101 @@ function isUnknownChainError(err: unknown): boolean {
 }
 
 function getTronWeb(provider: WalletProvider): TronWebLike {
-  const tronWeb = (provider as { tronWeb?: TronWebLike }).tronWeb ?? (provider as TronWebLike)
-  if (
-    !tronWeb ||
-    typeof tronWeb.transactionBuilder?.triggerSmartContract !== 'function' ||
-    typeof tronWeb.trx?.sign !== 'function' ||
-    typeof tronWeb.trx?.sendRawTransaction !== 'function'
-  ) {
-    throw new StableOpsWalletError('TRON 支付需要 TronLink / TronWeb 钱包 provider', 'wallet_provider_mismatch')
+  const wrapper = provider as {
+    tronLink?: { tronWeb?: TronWebLike }
+    tronWeb?: TronWebLike
+  }
+  const maybeGlobal = globalThis as typeof globalThis & {
+    tronLink?: { tronWeb?: TronWebLike }
+    tronWeb?: TronWebLike
+  }
+  const tronWeb = [
+    wrapper.tronLink?.tronWeb,
+    wrapper.tronWeb,
+    maybeGlobal.tronLink?.tronWeb,
+    maybeGlobal.tronWeb,
+    provider as TronWebLike,
+  ].find(isReadyTronWeb)
+  if (!tronWeb) {
+    throw new StableOpsWalletError(
+      'TRON 支付需要 TronLink / TronWeb 钱包 provider',
+      'wallet_provider_mismatch',
+    )
   }
   return tronWeb
 }
 
+async function resolveTronWeb(provider: WalletProvider): Promise<TronWebLike> {
+  if (!canAwaitTronWeb(provider)) return getTronWeb(provider)
+  const deadline = Date.now() + TRON_ADDRESS_READY_TIMEOUT_MS
+  while (true) {
+    try {
+      return getTronWeb(provider)
+    } catch (err) {
+      if (
+        !(err instanceof StableOpsWalletError) ||
+        err.code !== 'wallet_provider_mismatch' ||
+        Date.now() >= deadline
+      ) {
+        throw err
+      }
+    }
+    await delay(TRON_ADDRESS_POLL_INTERVAL_MS)
+  }
+}
+
+function isReadyTronWeb(value: unknown): value is TronWebLike {
+  const tronWeb = value as TronWebLike | undefined
+  return Boolean(
+    tronWeb &&
+      typeof tronWeb.transactionBuilder?.triggerSmartContract === 'function' &&
+      typeof tronWeb.trx?.sign === 'function' &&
+      typeof tronWeb.trx?.sendRawTransaction === 'function',
+  )
+}
+
+function canAwaitTronWeb(provider: WalletProvider): boolean {
+  const wrapper = provider as {
+    tronLink?: { request?: unknown; tronWeb?: TronWebLike }
+    request?: unknown
+    tronWeb?: TronWebLike
+  }
+  const maybeGlobal = globalThis as typeof globalThis & {
+    tronLink?: { request?: unknown; tronWeb?: TronWebLike }
+    tronWeb?: TronWebLike
+  }
+  return Boolean(
+    wrapper.tronLink?.request ||
+      wrapper.request ||
+      wrapper.tronLink?.tronWeb ||
+      wrapper.tronWeb ||
+      maybeGlobal.tronLink?.request ||
+      maybeGlobal.tronLink?.tronWeb ||
+      maybeGlobal.tronWeb,
+  )
+}
+
 function getTronAccountRequester(
   provider: WalletProvider,
-): ((args: { method: string; params?: unknown }) => Promise<unknown>) | undefined {
+):
+  | ((args: { method: string; params?: unknown }) => Promise<unknown>)
+  | undefined {
   const wrapper = provider as {
-    tronLink?: { request: <T = unknown>(args: { method: string; params?: unknown }) => Promise<T> }
-    request?<T = unknown>(args: { method: string; params?: unknown }): Promise<T>
+    tronLink?: {
+      request: <T = unknown>(args: {
+        method: string
+        params?: unknown
+      }) => Promise<T>
+    }
+    request?<T = unknown>(args: {
+      method: string
+      params?: unknown
+    }): Promise<T>
   }
-  return wrapper.tronLink?.request?.bind(wrapper.tronLink) ?? wrapper.request?.bind(wrapper)
+  return (
+    wrapper.tronLink?.request?.bind(wrapper.tronLink) ??
+    wrapper.request?.bind(wrapper)
+  )
 }
 
 function getTronSignedTransactionId(signed: unknown): string | undefined {
@@ -709,15 +1066,22 @@ function getTronSignedTransactionId(signed: unknown): string | undefined {
   return (signed as { txID?: string }).txID
 }
 
-async function requestSolanaPublicKey(provider: SolanaWalletProvider): Promise<string> {
+async function requestSolanaPublicKey(
+  provider: SolanaWalletProvider,
+): Promise<string> {
   const existing = solanaPublicKeyToString(provider.publicKey)
   if (existing) return existing
   const connected = await provider.connect?.()
-  const connectedKey = connected ? solanaPublicKeyToString(connected.publicKey) : undefined
+  const connectedKey = connected
+    ? solanaPublicKeyToString(connected.publicKey)
+    : undefined
   const providerKey = solanaPublicKeyToString(provider.publicKey)
   const publicKey = connectedKey ?? providerKey
   if (!publicKey) {
-    throw new StableOpsWalletError('Solana 钱包未返回可用账户', 'wallet_account_not_found')
+    throw new StableOpsWalletError(
+      'Solana 钱包未返回可用账户',
+      'wallet_account_not_found',
+    )
   }
   return publicKey
 }
@@ -726,24 +1090,45 @@ async function sendSolanaTransaction(
   provider: SolanaWalletProvider,
   connection: Pick<Connection, 'sendRawTransaction'>,
   transaction: Transaction,
+  preferLocalSend: boolean,
 ): Promise<string> {
+  // signAndSendTransaction 会用钱包当前选中的网络（Phantom 默认主网）的 RPC 提交交易；当调用方
+  // 显式给了 connection / RPC（例如 playground 指定 devnet）时，blockhash 与代币账户都在目标
+  // cluster 上，交给钱包发往主网会模拟失败、抛出含糊的 "Unexpected error"。此时改为「仅签名 +
+  // 自有 connection 广播」，把交易锁定到指定 cluster。
+  if (preferLocalSend && typeof provider.signTransaction === 'function') {
+    walletDebug('solana:send-via', { method: 'signTransaction+localBroadcast' })
+    const signed = await provider.signTransaction(transaction)
+    return connection.sendRawTransaction(signed.serialize())
+  }
+
   if (typeof provider.signAndSendTransaction === 'function') {
+    walletDebug('solana:send-via', { method: 'signAndSendTransaction' })
     const result = await provider.signAndSendTransaction(transaction)
     const signature = typeof result === 'string' ? result : result.signature
     if (!signature) {
-      throw new StableOpsWalletError('Solana 钱包未返回交易签名', 'wallet_transaction_hash_not_found', result)
+      throw new StableOpsWalletError(
+        'Solana 钱包未返回交易签名',
+        'wallet_transaction_hash_not_found',
+        result,
+      )
     }
     return signature
   }
 
   if (typeof provider.signTransaction !== 'function') {
-    throw new StableOpsWalletError('Solana 支付需要钱包支持 signAndSendTransaction 或 signTransaction', 'wallet_provider_mismatch')
+    throw new StableOpsWalletError(
+      'Solana 支付需要钱包支持 signAndSendTransaction 或 signTransaction',
+      'wallet_provider_mismatch',
+    )
   }
   const signed = await provider.signTransaction(transaction)
   return connection.sendRawTransaction(signed.serialize())
 }
 
-function solanaPublicKeyToString(publicKey: SolanaPublicKeyLike | string | null | undefined): string | undefined {
+function solanaPublicKeyToString(
+  publicKey: SolanaPublicKeyLike | string | null | undefined,
+): string | undefined {
   if (!publicKey) return undefined
   if (typeof publicKey === 'string') return publicKey
   return publicKey.toBase58()
@@ -753,7 +1138,11 @@ function publicKeyFromString(web3: SolanaWeb3, address: string): PublicKey {
   try {
     return new web3.PublicKey(address)
   } catch (err) {
-    throw new StableOpsWalletError('Solana 地址格式无效', 'invalid_solana_address', { address, cause: err })
+    throw new StableOpsWalletError(
+      'Solana 地址格式无效',
+      'invalid_solana_address',
+      { address, cause: err },
+    )
   }
 }
 
@@ -786,10 +1175,16 @@ function createAssociatedTokenAccountIdempotentInstruction(
       { pubkey: associatedToken, isSigner: false, isWritable: true },
       { pubkey: owner, isSigner: false, isWritable: false },
       { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: web3.SystemProgram.programId, isSigner: false, isWritable: false },
+      {
+        pubkey: web3.SystemProgram.programId,
+        isSigner: false,
+        isWritable: false,
+      },
       { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     ],
-    data: new Uint8Array([SOLANA_CREATE_ASSOCIATED_TOKEN_ACCOUNT_IDEMPOTENT_INSTRUCTION]) as unknown as Buffer,
+    data: new Uint8Array([
+      SOLANA_CREATE_ASSOCIATED_TOKEN_ACCOUNT_IDEMPOTENT_INSTRUCTION,
+    ]) as unknown as Buffer,
   })
 }
 
@@ -819,9 +1214,15 @@ function createSplTokenTransferCheckedInstruction(
   })
 }
 
-function writeBigUInt64LE(bytes: Uint8Array, value: bigint, offset: number): void {
+function writeBigUInt64LE(
+  bytes: Uint8Array,
+  value: bigint,
+  offset: number,
+): void {
   if (value > 0xffffffffffffffffn) {
-    throw new StableOpsWalletError('转账金额超出 u64 范围', 'invalid_amount', { amountUnits: value.toString() })
+    throw new StableOpsWalletError('转账金额超出 u64 范围', 'invalid_amount', {
+      amountUnits: value.toString(),
+    })
   }
   let remaining = value
   for (let index = 0; index < 8; index++) {
@@ -832,14 +1233,87 @@ function writeBigUInt64LE(bytes: Uint8Array, value: bigint, offset: number): voi
 
 function normalizeEvmAddress(address: string): string {
   if (!/^0x[0-9a-fA-F]{40}$/u.test(address)) {
-    throw new StableOpsWalletError('EVM 地址格式无效', 'invalid_evm_address', { address })
+    throw new StableOpsWalletError('EVM 地址格式无效', 'invalid_evm_address', {
+      address,
+    })
   }
   return address.toLowerCase()
 }
 
+const TRON_ADDRESS_REGEX = /^T[1-9A-HJ-NP-Za-km-z]{33}$/u
+// tron_requestAccounts 返回后 TronLink 并不会同步写好 defaultAddress：base58 会短暂保持为
+// false / 空，立即读取会拿到非法值。这里给一个短的就绪轮询预算。
+const TRON_ADDRESS_READY_TIMEOUT_MS = 3_000
+const TRON_ADDRESS_POLL_INTERVAL_MS = 150
+
+function isValidTronBase58(value: unknown): value is string {
+  return typeof value === 'string' && TRON_ADDRESS_REGEX.test(value)
+}
+
+function resolveTronDefaultAddressBase58(tronWeb: TronWebLike): string | undefined {
+  const base58 = tronWeb.defaultAddress?.base58
+  if (isValidTronBase58(base58)) return base58
+
+  const hex = tronWeb.defaultAddress?.hex
+  if (typeof hex !== 'string' || !hex) return undefined
+  const fromHex = tronWeb.address?.fromHex
+  if (typeof fromHex !== 'function') return undefined
+
+  try {
+    const converted = fromHex(hex)
+    return isValidTronBase58(converted) ? converted : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// 解析 TRON 付款方地址：调用方显式传入则直接校验；否则等待 TronLink 把 defaultAddress 写好
+// 再取，避免在授权刚返回的窗口内读到 false 而误报「地址格式无效」。
+async function resolveTronFromAddress(
+  provider: WalletProvider,
+  tronWeb: TronWebLike,
+  explicit: string | undefined,
+): Promise<string> {
+  if (explicit) return normalizeTronAddress(explicit)
+  const deadline = Date.now() + TRON_ADDRESS_READY_TIMEOUT_MS
+  let current = tronWeb
+  let base58 = resolveTronDefaultAddressBase58(current)
+  if (!base58) {
+    walletDebug('tron:awaiting-address', {
+      initialBase58: current.defaultAddress?.base58,
+      hasHex: typeof current.defaultAddress?.hex === 'string',
+    })
+  }
+  while (!base58 && Date.now() < deadline) {
+    await delay(TRON_ADDRESS_POLL_INTERVAL_MS)
+    // TronLink 授权完成后可能替换全局 tronWeb 对象，重新读取以获取最新引用
+    try {
+      current = getTronWeb(provider)
+    } catch {
+      // 尚未就绪，继续等待
+    }
+    base58 = resolveTronDefaultAddressBase58(current)
+  }
+  if (!base58) {
+    throw new StableOpsWalletError(
+      'TRON 钱包地址未就绪，请确保已在 TronLink 中授权连接并解锁钱包',
+      'tron_address_not_ready',
+    )
+  }
+  return base58
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 function normalizeTronAddress(address: string | undefined): string {
-  if (!address || !/^T[1-9A-HJ-NP-Za-km-z]{33}$/u.test(address)) {
-    throw new StableOpsWalletError('TRON 地址格式无效', 'invalid_tron_address', { address })
+  if (!address || !TRON_ADDRESS_REGEX.test(address)) {
+    throw new StableOpsWalletError(
+      'TRON 地址格式无效',
+      'invalid_tron_address',
+      { address },
+    )
   }
   return address
 }
