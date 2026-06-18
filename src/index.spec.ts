@@ -87,6 +87,11 @@ class MockSolanaProvider implements SolanaWalletProvider {
     this.signedTransaction = transaction
     return { signature: 'SOLANA_SIGNATURE' }
   }
+
+  async signTransaction(transaction: Transaction): Promise<Transaction> {
+    this.signedTransaction = transaction
+    return { serialize: () => new Uint8Array([1, 2, 3]) } as unknown as Transaction
+  }
 }
 
 const solanaConnection = {
@@ -94,7 +99,7 @@ const solanaConnection = {
     return { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1 }
   },
   async sendRawTransaction() {
-    return 'unused'
+    return 'SOLANA_SIGNATURE'
   },
 }
 
@@ -238,6 +243,60 @@ describe('sendWalletPayment', () => {
     expect(result.txHash).toBe('TRON_TX_HASH')
   })
 
+  it('TronLink 替换全局 tronWeb 时不被 provider 缓存的旧对象挡住', async () => {
+    const staleTronWeb = {
+      defaultAddress: { base58: false as string | false },
+      transactionBuilder: {
+        triggerSmartContract: async () => {
+          throw new Error('stale tronWeb should not be used')
+        },
+      },
+      trx: {
+        sign: async (transaction: unknown) => ({ transaction, txID: 'STALE_TX_ID' }),
+        sendRawTransaction: async () => ({ txid: 'STALE_TX_HASH' }),
+      },
+    }
+    const readyTronWeb = {
+      defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
+      transactionBuilder: {
+        triggerSmartContract: async () => ({ transaction: { raw_data: {} } }),
+      },
+      trx: {
+        sign: async (transaction: unknown) => ({ transaction, txID: 'TRON_TX_ID' }),
+        sendRawTransaction: async () => ({ txid: 'TRON_TX_HASH' }),
+      },
+    }
+    const provider = {
+      tronWeb: staleTronWeb,
+      tronLink: {
+        request: async <T>() => {
+          setTimeout(() => {
+            Object.assign(globalThis, { tronWeb: readyTronWeb })
+          }, 50)
+          return { code: 200 } as T
+        },
+      },
+    }
+    Object.assign(globalThis, { tronWeb: staleTronWeb })
+
+    try {
+      const result = await sendWalletPayment({
+        provider,
+        amount: '1',
+        instruction: {
+          chain: 'tron-nile',
+          asset: 'USDT',
+          address: 'TBpYsqR9qpFT8m36GBH572TSu4phguFfz1',
+        },
+      })
+
+      expect(result.txHash).toBe('TRON_TX_HASH')
+      expect(result.fromAddress).toBe('TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R')
+    } finally {
+      Reflect.deleteProperty(globalThis, 'tronWeb')
+    }
+  })
+
   it('TronLink 只暴露 defaultAddress.hex 时转换为 base58 付款方地址', async () => {
     const calls: string[] = []
     const tronWeb = {
@@ -357,6 +416,40 @@ describe('sendWalletPayment', () => {
 
     expect(result.txHash).toBe('DEVNET_SIGNATURE')
     expect(calls).toEqual(['signTransaction', 'sendRawTransaction'])
+  })
+
+  it('显式指定 Solana RPC 但钱包不支持 signTransaction 时给出明确错误', async () => {
+    const calls: string[] = []
+    const provider: SolanaWalletProvider = {
+      publicKey: new PublicKey('11111111111111111111111111111112'),
+      async signAndSendTransaction() {
+        calls.push('signAndSendTransaction')
+        return { signature: 'WALLET_NETWORK_SIGNATURE' }
+      },
+    }
+    const devnetConnection = {
+      async getLatestBlockhash() {
+        return { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1 }
+      },
+      async sendRawTransaction() {
+        calls.push('sendRawTransaction')
+        return 'DEVNET_SIGNATURE'
+      },
+    }
+
+    await expect(
+      sendWalletPayment({
+        provider,
+        amount: '1',
+        solanaConnection: devnetConnection,
+        instruction: {
+          chain: 'solana-devnet',
+          asset: 'USDC',
+          address: 'So11111111111111111111111111111111111111112',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'wallet_provider_mismatch' })
+    expect(calls).toEqual([])
   })
 
   it('拒绝链与资产不匹配的支付指令', async () => {

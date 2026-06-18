@@ -5,9 +5,8 @@ import type {
   TransactionInstruction,
 } from '@solana/web3.js'
 
-// @solana/web3.js is an optional peer dep — only needed for Solana payment paths.
-// Lazily loaded so EVM/TRON-only users don't need to install it, and a friendly
-// error is thrown if it's missing rather than crashing at module load.
+// @solana/web3.js 是可选 peer 依赖：仅 Solana 支付路径需要，懒加载以免
+// 只用 EVM/TRON 的使用者被迫安装，且缺失时抛出友好异常而非模块加载崩溃。
 type SolanaWeb3 = typeof import('@solana/web3.js')
 
 let solanaWeb3Promise: Promise<SolanaWeb3> | undefined
@@ -203,7 +202,7 @@ export type WalletProvider =
   | SolanaWalletProvider
 
 type TronWebLike = {
-  // TronLink sets base58 to false (rather than undefined) when not connected/ready — the type reflects this so readiness checks work correctly.
+  // TronLink 未连接/未就绪时把 base58 置为 false（而非缺省），类型如实反映以便正确判定就绪。
   defaultAddress?: { base58?: string | false; hex?: string | false }
   address?: {
     fromHex?(address: string): string
@@ -301,13 +300,12 @@ export class StableOpsWalletError extends Error {
 }
 
 // ── Debug ──────────────────────────────────────────────────────────────────
-// Module-level debug flag: off by default so walletDebug() calls are zero-cost no-ops.
-// Enable via any of:
-//   1) setWalletSdkDebug(true) (explicit toggle in code)
-//   2) globalThis.STABLEOPS_WALLET_DEBUG = true (browser console)
-//   3) env var WALLET_SDK_DEBUG=1 / true (Node / bundler injection)
-// Precedence: once setWalletSdkDebug is called explicitly it takes precedence;
-// otherwise falls back to global/env flags.
+// 模块级 debug 开关：默认关，关闭时所有 walletDebug() 调用是零开销 no-op。
+// 开启方式（任一）：
+//   1) setWalletSdkDebug(true)（代码里显式打开/关闭）
+//   2) 全局 globalThis.STABLEOPS_WALLET_DEBUG = true（浏览器控制台即可临时打开）
+//   3) 环境变量 WALLET_SDK_DEBUG=1 / true（Node / 打包注入）
+// 优先级：setWalletSdkDebug 一旦被显式调用即以它为准，否则回落到全局/环境兜底。
 let moduleDebug: boolean | undefined
 
 export function setWalletSdkDebug(enabled: boolean): void {
@@ -326,7 +324,7 @@ export function isWalletSdkDebugEnabled(): boolean {
   return env === '1' || env === 'true'
 }
 
-// Unified log output with [wallet-sdk] prefix, readable in both browser and Node consoles. Disabled by default so args aren't even evaluated.
+// 统一日志出口：带 [wallet-sdk] 前缀，浏览器与 Node 控制台均可读；关闭时直接返回不计算参数开销。
 function walletDebug(event: string, data?: Record<string, unknown>): void {
   if (!isWalletSdkDebugEnabled()) return
   if (data !== undefined) {
@@ -673,8 +671,12 @@ async function sendTronWalletPayment(
     await accountRequester({ method: 'tron_requestAccounts' })
   }
 
-  const tronWeb = await resolveTronWeb(input.provider)
-  const fromAddress = await resolveTronFromAddress(input.provider, tronWeb, input.fromAddress)
+  const initialTronWeb = await resolveTronWeb(input.provider)
+  const { tronWeb, fromAddress } = await resolveTronFromAddress(
+    input.provider,
+    initialTronWeb,
+    input.fromAddress,
+  )
   walletDebug('tron:from', { fromAddress })
   const toAddress = normalizeTronAddress(instruction.address)
   const amountUnits = parseTokenAmount(input.amount, token.decimals)
@@ -808,8 +810,8 @@ async function sendSolanaWalletPayment(
     ),
   )
 
-  // When the caller explicitly provides an RPC/connection (e.g. playground on devnet), lock to that
-  // cluster and broadcast locally instead of letting the wallet submit on its currently selected network — see sendSolanaTransaction docs.
+  // 调用方显式提供 RPC/connection（如 playground devnet）时，锁定到目标 cluster 并本地广播，
+  // 避免钱包按当前所选网络提交；详见 sendSolanaTransaction。
   const txHash = await sendSolanaTransaction(
     provider,
     connection,
@@ -965,7 +967,7 @@ function isUnknownChainError(err: unknown): boolean {
   return Number((originalError as { code?: unknown }).code) === 4902
 }
 
-function getTronWeb(provider: WalletProvider): TronWebLike {
+function getTronWeb(provider: WalletProvider, preferLatest = false): TronWebLike {
   const wrapper = provider as {
     tronLink?: { tronWeb?: TronWebLike }
     tronWeb?: TronWebLike
@@ -974,12 +976,18 @@ function getTronWeb(provider: WalletProvider): TronWebLike {
     tronLink?: { tronWeb?: TronWebLike }
     tronWeb?: TronWebLike
   }
-  const tronWeb = [
+  const cachedCandidates = [
     wrapper.tronLink?.tronWeb,
     wrapper.tronWeb,
+    provider as TronWebLike,
+  ]
+  const latestCandidates = [
     maybeGlobal.tronLink?.tronWeb,
     maybeGlobal.tronWeb,
-    provider as TronWebLike,
+  ]
+  const tronWeb = [
+    ...(preferLatest ? latestCandidates : cachedCandidates),
+    ...(preferLatest ? cachedCandidates : latestCandidates),
   ].find(isReadyTronWeb)
   if (!tronWeb) {
     throw new StableOpsWalletError(
@@ -1094,11 +1102,17 @@ async function sendSolanaTransaction(
   transaction: Transaction,
   preferLocalSend: boolean,
 ): Promise<string> {
-  // signAndSendTransaction submits via the wallet's currently selected network (Phantom defaults to mainnet).
-  // When the caller explicitly provides a connection / RPC (e.g. playground on devnet), the blockhash and
-  // token accounts are on the target cluster — sending via wallet to mainnet would fail simulation with a
-  // vague "Unexpected error". Instead, use "sign-only + local broadcast" to pin the tx to the target cluster.
-  if (preferLocalSend && typeof provider.signTransaction === 'function') {
+  // signAndSendTransaction 会通过钱包当前选择的网络提交（Phantom 默认主网）。
+  // 调用方显式提供 connection / RPC（如 playground devnet）时，blockhash 和 token account
+  // 都属于目标 cluster；若交给钱包发到主网，通常会得到含糊的 "Unexpected error"。
+  // 因此这里使用「仅签名 + 本地广播」把交易固定到目标 cluster。
+  if (preferLocalSend) {
+    if (typeof provider.signTransaction !== 'function') {
+      throw new StableOpsWalletError(
+        'Solana payments with an explicit RPC or connection require a wallet that supports signTransaction',
+        'wallet_provider_mismatch',
+      )
+    }
     walletDebug('solana:send-via', { method: 'signTransaction+localBroadcast' })
     const signed = await provider.signTransaction(transaction)
     return connection.sendRawTransaction(signed.serialize())
@@ -1243,9 +1257,8 @@ function normalizeEvmAddress(address: string): string {
 }
 
 const TRON_ADDRESS_REGEX = /^T[1-9A-HJ-NP-Za-km-z]{33}$/u
-// After tron_requestAccounts returns, TronLink does not synchronously write defaultAddress:
-// base58 briefly stays false / empty — reading it immediately yields an invalid value.
-// Give it a short polling budget to become ready.
+// tron_requestAccounts 返回后，TronLink 不会同步写入 defaultAddress：
+// base58 会短暂保持 false / 空值，立即读取会得到无效地址；这里给它一个短轮询窗口。
 const TRON_ADDRESS_READY_TIMEOUT_MS = 3_000
 const TRON_ADDRESS_POLL_INTERVAL_MS = 150
 
@@ -1270,15 +1283,14 @@ function resolveTronDefaultAddressBase58(tronWeb: TronWebLike): string | undefin
   }
 }
 
-// Resolve the TRON sender address: if the caller provides one explicitly, validate and return it;
-// otherwise wait for TronLink to populate defaultAddress, avoiding false reports of "invalid address"
-// when reading during the brief window after authorization.
+// 解析 TRON 付款方地址：调用方显式传入时直接校验返回；
+// 否则等待 TronLink 填好 defaultAddress，避免授权后短暂空窗期误报地址无效。
 async function resolveTronFromAddress(
   provider: WalletProvider,
   tronWeb: TronWebLike,
   explicit: string | undefined,
-): Promise<string> {
-  if (explicit) return normalizeTronAddress(explicit)
+): Promise<{ tronWeb: TronWebLike; fromAddress: string }> {
+  if (explicit) return { tronWeb, fromAddress: normalizeTronAddress(explicit) }
   const deadline = Date.now() + TRON_ADDRESS_READY_TIMEOUT_MS
   let current = tronWeb
   let base58 = resolveTronDefaultAddressBase58(current)
@@ -1290,11 +1302,11 @@ async function resolveTronFromAddress(
   }
   while (!base58 && Date.now() < deadline) {
     await delay(TRON_ADDRESS_POLL_INTERVAL_MS)
-    // TronLink may replace the global tronWeb object after authorization; re-read to get the latest reference
+    // TronLink 可能在授权后替换全局 tronWeb 对象；轮询时优先重读最新引用。
     try {
-      current = getTronWeb(provider)
+      current = getTronWeb(provider, true)
     } catch {
-      // Not ready yet, keep waiting
+      // 尚未就绪，继续等待。
     }
     base58 = resolveTronDefaultAddressBase58(current)
   }
@@ -1304,7 +1316,7 @@ async function resolveTronFromAddress(
       'tron_address_not_ready',
     )
   }
-  return base58
+  return { tronWeb: current, fromAddress: base58 }
 }
 
 function delay(ms: number): Promise<void> {
