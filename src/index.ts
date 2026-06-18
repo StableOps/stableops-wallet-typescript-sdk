@@ -81,7 +81,7 @@ const WALLET_TOKEN_CONTRACTS: readonly WalletTokenContract[] = [
   {
     chain: 'arbitrum',
     asset: 'USDC',
-    address: '0xaf88d065e77cc2239327c5edb3a432268e5831',
+    address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
     decimals: 6,
   },
   {
