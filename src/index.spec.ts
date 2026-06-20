@@ -639,6 +639,41 @@ describe('测试网钱包支持', () => {
   })
 })
 
+describe('Optimism / BSC 钱包支持', () => {
+  it('eip155 chain id 正确', () => {
+    expect(EvmWalletChainConfigs['optimism'].eip155ChainId).toBe(10)
+    expect(EvmWalletChainConfigs['optimism-sepolia'].eip155ChainId).toBe(11155420)
+    expect(EvmWalletChainConfigs['bsc'].eip155ChainId).toBe(56)
+  })
+
+  it('BSC 链原生币是 BNB / decimals 18', () => {
+    const cfg = EvmWalletChainConfigs['bsc']
+    expect(cfg.nativeCurrency.symbol).toBe('BNB')
+    expect(cfg.nativeCurrency.decimals).toBe(18)
+  })
+
+  it('不再落到 unsupported_chain / token_contract_not_found（含 BSC USDT 18 dec 路径）', async () => {
+    for (const [chain, asset] of [
+      ['optimism', 'USDC'],
+      ['bsc', 'USDT'],
+      ['optimism-sepolia', 'USDC'],
+    ] as const) {
+      let code = ''
+      try {
+        await sendWalletPayment({
+          provider: {} as never,
+          amount: '0.01',
+          instruction: { chain, asset, address: '0x' + '1'.repeat(40) },
+        })
+      } catch (err) {
+        code = err instanceof StableOpsWalletError ? err.code : 'other'
+      }
+      expect(code).not.toBe('unsupported_chain')
+      expect(code).not.toBe('token_contract_not_found')
+    }
+  })
+})
+
 describe('debug 开关', () => {
   afterEach(() => {
     setWalletSdkDebug(false)

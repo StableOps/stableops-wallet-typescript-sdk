@@ -31,11 +31,14 @@ export type ChainId =
   | 'base-sepolia'
   | 'arbitrum'
   | 'polygon'
+  | 'optimism'
+  | 'bsc'
   | 'tron'
   | 'solana'
   | 'ethereum-sepolia'
   | 'arbitrum-sepolia'
   | 'polygon-amoy'
+  | 'optimism-sepolia'
   | 'solana-devnet'
   | 'tron-nile'
 
@@ -91,6 +94,30 @@ const WALLET_TOKEN_CONTRACTS: readonly WalletTokenContract[] = [
     decimals: 6,
   },
   {
+    chain: 'optimism',
+    asset: 'USDC',
+    address: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+    decimals: 6,
+  },
+  {
+    chain: 'optimism',
+    asset: 'USDT',
+    address: '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58',
+    decimals: 6,
+  },
+  {
+    chain: 'bsc',
+    asset: 'USDC',
+    address: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
+    decimals: 18,
+  },
+  {
+    chain: 'bsc',
+    asset: 'USDT',
+    address: '0x55d398326f99059ff775485246999027b3197955',
+    decimals: 18,
+  },
+  {
     chain: 'tron',
     asset: 'USDT',
     address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
@@ -127,6 +154,12 @@ const WALLET_TOKEN_CONTRACTS: readonly WalletTokenContract[] = [
     decimals: 6,
   },
   {
+    chain: 'optimism-sepolia',
+    asset: 'USDC',
+    address: '0x5fd84259d66cd46123540766be93dfe6d43130d7',
+    decimals: 6,
+  },
+  {
     chain: 'solana-devnet',
     asset: 'USDC',
     address: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
@@ -146,9 +179,12 @@ const EVM_WALLET_CHAINS = [
   'base-sepolia',
   'arbitrum',
   'polygon',
+  'optimism',
+  'bsc',
   'ethereum-sepolia',
   'arbitrum-sepolia',
   'polygon-amoy',
+  'optimism-sepolia',
 ] as const
 const TRON_WALLET_CHAINS = ['tron', 'tron-nile'] as const
 const SOLANA_WALLET_CHAINS = ['solana', 'solana-devnet'] as const
@@ -377,6 +413,22 @@ export const EvmWalletChainConfigs: Readonly<
     rpcUrls: ['https://polygon-rpc.com'],
     blockExplorerUrls: ['https://polygonscan.com'],
   },
+  optimism: {
+    chainId: 'optimism',
+    eip155ChainId: 10,
+    chainName: 'OP Mainnet',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: ['https://mainnet.optimism.io'],
+    blockExplorerUrls: ['https://optimistic.etherscan.io'],
+  },
+  bsc: {
+    chainId: 'bsc',
+    eip155ChainId: 56,
+    chainName: 'BNB Smart Chain',
+    nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+    rpcUrls: ['https://bsc-rpc.publicnode.com'],
+    blockExplorerUrls: ['https://bscscan.com'],
+  },
   'ethereum-sepolia': {
     chainId: 'ethereum-sepolia',
     eip155ChainId: 11155111,
@@ -400,6 +452,14 @@ export const EvmWalletChainConfigs: Readonly<
     nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
     rpcUrls: ['https://rpc-amoy.polygon.technology'],
     blockExplorerUrls: ['https://amoy.polygonscan.com'],
+  },
+  'optimism-sepolia': {
+    chainId: 'optimism-sepolia',
+    eip155ChainId: 11155420,
+    chainName: 'Optimism Sepolia',
+    nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: ['https://sepolia.optimism.io'],
+    blockExplorerUrls: ['https://sepolia-optimism.etherscan.io'],
   },
 }
 
