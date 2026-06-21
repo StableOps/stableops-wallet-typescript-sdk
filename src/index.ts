@@ -33,6 +33,7 @@ export type ChainId =
   | 'polygon'
   | 'optimism'
   | 'bsc'
+  | 'bsc-testnet'
   | 'tron'
   | 'solana'
   | 'ethereum-sepolia'
@@ -171,6 +172,18 @@ const WALLET_TOKEN_CONTRACTS: readonly WalletTokenContract[] = [
     address: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
     decimals: 6,
   },
+  {
+    chain: 'bsc-testnet',
+    asset: 'USDC',
+    address: '0x64544969ed7ebf5f083679233325356ebe738930',
+    decimals: 18,
+  },
+  {
+    chain: 'bsc-testnet',
+    asset: 'USDT',
+    address: '0x66e972502a34a625828c544a1914e8d8cc2a9de5',
+    decimals: 18,
+  },
 ]
 
 const EVM_WALLET_CHAINS = [
@@ -181,6 +194,7 @@ const EVM_WALLET_CHAINS = [
   'polygon',
   'optimism',
   'bsc',
+  'bsc-testnet',
   'ethereum-sepolia',
   'arbitrum-sepolia',
   'polygon-amoy',
@@ -428,6 +442,14 @@ export const EvmWalletChainConfigs: Readonly<
     nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
     rpcUrls: ['https://bsc-rpc.publicnode.com'],
     blockExplorerUrls: ['https://bscscan.com'],
+  },
+  'bsc-testnet': {
+    chainId: 'bsc-testnet',
+    eip155ChainId: 97,
+    chainName: 'BNB Smart Chain Testnet',
+    nativeCurrency: { name: 'tBNB', symbol: 'BNB', decimals: 18 },
+    rpcUrls: ['https://bsc-testnet-rpc.publicnode.com'],
+    blockExplorerUrls: ['https://testnet.bscscan.com'],
   },
   'ethereum-sepolia': {
     chainId: 'ethereum-sepolia',

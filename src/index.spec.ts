@@ -656,6 +656,8 @@ describe('Optimism / BSC 钱包支持', () => {
     for (const [chain, asset] of [
       ['optimism', 'USDC'],
       ['bsc', 'USDT'],
+      ['bsc-testnet', 'USDC'],
+      ['bsc-testnet', 'USDT'],
       ['optimism-sepolia', 'USDC'],
     ] as const) {
       let code = ''
