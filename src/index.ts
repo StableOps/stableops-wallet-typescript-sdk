@@ -276,6 +276,12 @@ type TronWebLike = {
       transaction?: { txID?: string }
       result?: boolean
     }>
+    // 交易上链后的执行回执；未打包时返回空对象。receipt.result 为 'SUCCESS' 表示合约执行成功。
+    // 标记为可选：老版本 tronWeb 可能没有，缺失时按 best-effort 放行。
+    getTransactionInfo?(txID: string): Promise<{
+      id?: string
+      receipt?: { result?: string }
+    }>
   }
 }
 
@@ -852,6 +858,10 @@ async function sendTronWalletPayment(
     )
   }
 
+  // 广播返回 txid 不代表合约执行成功。等待并校验执行回执：result 非 SUCCESS（如 REVERT /
+  // OUT_OF_ENERGY）表示没有代币转出，订单永远不会 detected，必须在此显式失败。
+  await confirmTronTransactionSuccess(tronWeb, txHash)
+
   return buildSentPayment(
     txHash,
     instruction,
@@ -860,6 +870,48 @@ async function sendTronWalletPayment(
     input.amount,
     amountUnits,
   )
+}
+
+// TRON 执行回执轮询参数：~3s 出块，每 ~3s 查一次，最长 ~90s。
+const TRON_RECEIPT_POLL_INTERVAL_MS = 3_000
+const TRON_RECEIPT_TIMEOUT_MS = 90_000
+
+// 轮询 getTransactionInfo 校验 TRC-20 执行回执：
+//   receipt.result 非 'SUCCESS'（REVERT / OUT_OF_ENERGY 等）→ 抛 wallet_tx_reverted。
+//   'SUCCESS' → 正常返回。
+//   老版本 tronWeb 无 getTransactionInfo / 超时仍无回执 → best-effort 放行，交给 scanner。
+async function confirmTronTransactionSuccess(
+  tronWeb: TronWebLike,
+  txID: string,
+): Promise<void> {
+  const getInfo = tronWeb.trx.getTransactionInfo
+  if (typeof getInfo !== 'function') return
+  const deadline = Date.now() + TRON_RECEIPT_TIMEOUT_MS
+  for (;;) {
+    let result: string | undefined
+    try {
+      const info = await getInfo.call(tronWeb.trx, txID)
+      result = info?.receipt?.result
+    } catch (err) {
+      walletDebug('tron:receipt-error', { txID, error: String(err) })
+    }
+    if (result) {
+      walletDebug('tron:receipt', { txID, result })
+      if (result !== 'SUCCESS') {
+        throw new StableOpsWalletError(
+          `On-chain TRC-20 transfer failed (receipt result ${result}); no tokens were moved. A common cause is insufficient token balance or energy.`,
+          'wallet_tx_reverted',
+          { txHash: txID, result },
+        )
+      }
+      return
+    }
+    if (Date.now() >= deadline) {
+      walletDebug('tron:receipt-timeout', { txID })
+      return
+    }
+    await delay(TRON_RECEIPT_POLL_INTERVAL_MS)
+  }
 }
 
 async function sendSolanaWalletPayment(
@@ -953,6 +1005,9 @@ async function sendSolanaWalletPayment(
     transaction,
     preferLocalSend,
   )
+  // 拿到签名不代表交易执行成功。等待并校验签名状态：err 非空表示交易已落块但执行失败，
+  // 没有代币转出、订单永远不会 detected，必须在此显式失败。
+  await confirmSolanaTransactionSuccess(connection, txHash)
   return buildSentPayment(
     txHash,
     instruction,
@@ -961,6 +1016,64 @@ async function sendSolanaWalletPayment(
     input.amount,
     amountUnits,
   )
+}
+
+// Solana 签名状态轮询参数：每 ~2s 查一次，最长 ~90s。
+const SOLANA_STATUS_POLL_INTERVAL_MS = 2_000
+const SOLANA_STATUS_TIMEOUT_MS = 90_000
+
+type SolanaSignatureStatusConnection = {
+  getSignatureStatuses?(signatures: string[]): Promise<{
+    value: Array<{ err?: unknown; confirmationStatus?: string } | null>
+  }>
+}
+
+// 轮询 getSignatureStatuses 校验交易状态：
+//   err 非空 → 链上执行失败，抛 wallet_tx_reverted。
+//   err 为空且 confirmed/finalized → 正常返回。
+//   connection 不支持 getSignatureStatuses（如测试桩）/ 超时仍无状态 → best-effort 放行，交给 scanner。
+async function confirmSolanaTransactionSuccess(
+  connection: unknown,
+  signature: string,
+): Promise<void> {
+  const getStatuses = (connection as SolanaSignatureStatusConnection)
+    .getSignatureStatuses
+  if (typeof getStatuses !== 'function') return
+  const deadline = Date.now() + SOLANA_STATUS_TIMEOUT_MS
+  for (;;) {
+    let status: { err?: unknown; confirmationStatus?: string } | null | undefined
+    try {
+      const res = await getStatuses.call(connection, [signature])
+      status = res?.value?.[0]
+    } catch (err) {
+      walletDebug('solana:status-error', { signature, error: String(err) })
+    }
+    if (status) {
+      walletDebug('solana:status', {
+        signature,
+        err: status.err ?? null,
+        confirmationStatus: status.confirmationStatus,
+      })
+      if (status.err) {
+        throw new StableOpsWalletError(
+          'On-chain Solana transfer failed (transaction returned an error); no tokens were moved. A common cause is insufficient token balance.',
+          'wallet_tx_reverted',
+          { txHash: signature, error: status.err },
+        )
+      }
+      if (
+        status.confirmationStatus === 'confirmed' ||
+        status.confirmationStatus === 'finalized'
+      ) {
+        return
+      }
+    }
+    if (Date.now() >= deadline) {
+      walletDebug('solana:status-timeout', { signature })
+      return
+    }
+    await delay(SOLANA_STATUS_POLL_INTERVAL_MS)
+  }
 }
 
 function buildSentPayment(
