@@ -19,7 +19,9 @@ import {
 class MockEvmProvider implements Eip1193Provider {
   readonly calls: { method: string; params?: unknown[] | Record<string, unknown> }[] = []
 
-  constructor(private readonly options: { failSwitchOnce?: boolean } = {}) {}
+  constructor(
+    private readonly options: { failSwitchOnce?: boolean; receiptStatus?: string } = {},
+  ) {}
 
   async request<T>(args: { method: string; params?: unknown[] | Record<string, unknown> }): Promise<T> {
     this.calls.push(args)
@@ -31,6 +33,9 @@ class MockEvmProvider implements Eip1193Provider {
       throw err
     }
     if (args.method === 'eth_sendTransaction') return '0xTXHASH' as T
+    // 回执默认成功（0x1）；测试可传 receiptStatus 模拟链上 revert（0x0）。
+    if (args.method === 'eth_getTransactionReceipt')
+      return { status: this.options.receiptStatus ?? '0x1' } as T
     return undefined as T
   }
 }
@@ -152,8 +157,30 @@ describe('sendWalletPayment', () => {
       'eth_requestAccounts',
       'wallet_switchEthereumChain',
       'eth_sendTransaction',
+      'eth_getTransactionReceipt',
     ])
     expect(provider.calls[1]?.params).toEqual([{ chainId: '0x2105' }])
+  })
+
+  it('EVM 交易回执 status=0x0（链上 revert，如代币余额不足）时抛错而非误报成功', async () => {
+    const provider = new MockEvmProvider({ receiptStatus: '0x0' })
+
+    await expect(
+      sendWalletPayment({
+        provider,
+        amount: '10',
+        instruction: {
+          chain: 'base',
+          asset: 'USDC',
+          address: '0x2222222222222222222222222222222222222222',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'wallet_tx_reverted' })
+
+    // 必须真的查过回执才能判断 revert。
+    expect(provider.calls.map((call) => call.method)).toContain(
+      'eth_getTransactionReceipt',
+    )
   })
 
   it('EVM 钱包缺链时先添加网络再切链', async () => {
@@ -175,6 +202,7 @@ describe('sendWalletPayment', () => {
       'wallet_addEthereumChain',
       'wallet_switchEthereumChain',
       'eth_sendTransaction',
+      'eth_getTransactionReceipt',
     ])
   })
 

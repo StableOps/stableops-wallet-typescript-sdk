@@ -732,6 +732,11 @@ async function sendEvmWalletPayment(
     ],
   })
 
+  // eth_sendTransaction 返回只代表交易已广播进内存池，不代表上链成功。等待并校验回执：
+  // 若链上 revert（status 0x0，如代币余额不足），没有任何代币转出、订单永远不会 detected，
+  // 必须在此显式失败，否则上层会把一笔注定失败的交易当成「已支付」一直空等。
+  await confirmEvmTransactionSuccess(provider, txHash)
+
   return buildSentPayment(
     txHash,
     instruction,
@@ -740,6 +745,54 @@ async function sendEvmWalletPayment(
     input.amount,
     amountUnits,
   )
+}
+
+// EVM 回执轮询参数：默认每 ~2s 查一次，最长 ~90s。revert 与成功一样会很快上链，
+// 这个窗口足以在超时前捕获绝大多数 revert；慢链/节点滞后导致拿不到回执时按 best-effort 放行。
+const EVM_RECEIPT_POLL_INTERVAL_MS = 2_000
+const EVM_RECEIPT_TIMEOUT_MS = 90_000
+
+type EvmTransactionReceipt = { status?: string | null } | null
+
+// 轮询 eth_getTransactionReceipt 并按 EIP-658 校验 status：
+//   0x0 → 链上 revert，抛 wallet_tx_reverted（没有代币转出，订单不会 detected）。
+//   0x1 → 成功，正常返回。
+//   缺 status 字段 / 超时仍无回执 → best-effort 放行，把最终判断交给 scanner（按实际入金匹配）。
+async function confirmEvmTransactionSuccess(
+  provider: Eip1193Provider,
+  txHash: string,
+): Promise<void> {
+  const deadline = Date.now() + EVM_RECEIPT_TIMEOUT_MS
+  for (;;) {
+    let receipt: EvmTransactionReceipt = null
+    try {
+      receipt = await provider.request<EvmTransactionReceipt>({
+        method: 'eth_getTransactionReceipt',
+        params: [txHash],
+      })
+    } catch (err) {
+      // 单次回执查询出错（节点抖动）不致命：记一行 debug，继续轮询直到超时。
+      walletDebug('evm:receipt-error', { txHash, error: String(err) })
+    }
+    if (receipt) {
+      const raw = typeof receipt.status === 'string' ? receipt.status.toLowerCase() : receipt.status
+      walletDebug('evm:receipt', { txHash, status: receipt.status })
+      if (raw === '0x0' || raw === '0x00') {
+        throw new StableOpsWalletError(
+          'On-chain transfer reverted (receipt status 0x0); no tokens were moved. A common cause is insufficient token balance in the paying wallet.',
+          'wallet_tx_reverted',
+          { txHash, status: receipt.status },
+        )
+      }
+      // 0x1 / 0x01 成功，或回执缺 status 字段：均结束等待。
+      return
+    }
+    if (Date.now() >= deadline) {
+      walletDebug('evm:receipt-timeout', { txHash })
+      return
+    }
+    await delay(EVM_RECEIPT_POLL_INTERVAL_MS)
+  }
 }
 
 async function sendTronWalletPayment(
