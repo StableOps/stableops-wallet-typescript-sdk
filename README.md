@@ -64,10 +64,7 @@ Use the order returned by your backend and let the SDK choose a compatible
 wallet provider from the browser.
 
 ```ts
-import {
-  getInjectedWalletProviders,
-  sendOrderWalletPayment,
-} from '@stableops/wallet-sdk'
+import { getInjectedWalletProviders, sendOrderWalletPayment } from '@stableops/wallet-sdk'
 
 const sent = await sendOrderWalletPayment({
   order,

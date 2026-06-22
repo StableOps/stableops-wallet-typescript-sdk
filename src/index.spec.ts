@@ -23,9 +23,13 @@ class MockEvmProvider implements Eip1193Provider {
     private readonly options: { failSwitchOnce?: boolean; receiptStatus?: string } = {},
   ) {}
 
-  async request<T>(args: { method: string; params?: unknown[] | Record<string, unknown> }): Promise<T> {
+  async request<T>(args: {
+    method: string
+    params?: unknown[] | Record<string, unknown>
+  }): Promise<T> {
     this.calls.push(args)
-    if (args.method === 'eth_requestAccounts') return ['0x1111111111111111111111111111111111111111'] as T
+    if (args.method === 'eth_requestAccounts')
+      return ['0x1111111111111111111111111111111111111111'] as T
     if (args.method === 'wallet_switchEthereumChain' && this.options.failSwitchOnce) {
       this.options.failSwitchOnce = false
       const err = new Error('unknown chain') as Error & { code: number }
@@ -123,9 +127,7 @@ describe('parseTokenAmount', () => {
 
 describe('encodeErc20Transfer', () => {
   it('生成 ERC-20 transfer(address,uint256) calldata', () => {
-    expect(
-      encodeErc20Transfer('0x2222222222222222222222222222222222222222', 1_000_000n),
-    ).toBe(
+    expect(encodeErc20Transfer('0x2222222222222222222222222222222222222222', 1_000_000n)).toBe(
       '0xa9059cbb000000000000000000000000222222222222222222222222222222222222222200000000000000000000000000000000000000000000000000000000000f4240',
     )
   })
@@ -178,9 +180,7 @@ describe('sendWalletPayment', () => {
     ).rejects.toMatchObject({ code: 'wallet_tx_reverted' })
 
     // 必须真的查过回执才能判断 revert。
-    expect(provider.calls.map((call) => call.method)).toContain(
-      'eth_getTransactionReceipt',
-    )
+    expect(provider.calls.map((call) => call.method)).toContain('eth_getTransactionReceipt')
   })
 
   it('EVM 钱包缺链时先添加网络再切链', async () => {
@@ -227,7 +227,12 @@ describe('sendWalletPayment', () => {
       toAddress: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN',
       amountUnits: '2500000',
     })
-    expect(provider.calls).toEqual(['tron_requestAccounts', 'triggerSmartContract', 'sign', 'sendRawTransaction'])
+    expect(provider.calls).toEqual([
+      'tron_requestAccounts',
+      'triggerSmartContract',
+      'sign',
+      'sendRawTransaction',
+    ])
   })
 
   it('TRON 交易回执 result 非 SUCCESS（链上失败）时抛错而非误报成功', async () => {
@@ -594,7 +599,11 @@ describe('sendWalletPayment', () => {
       sendWalletPayment({
         provider: new MockEvmProvider(),
         amount: '1',
-        instruction: { chain: 'tron', asset: 'USDC', address: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN' },
+        instruction: {
+          chain: 'tron',
+          asset: 'USDC',
+          address: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN',
+        },
       }),
     ).rejects.toMatchObject({ code: 'token_contract_not_found' })
   })
@@ -613,7 +622,11 @@ describe('多候选订单支付', () => {
     )
 
     expect(selected).toEqual({
-      instruction: { chain: 'base', asset: 'USDC', address: '0x2222222222222222222222222222222222222222' },
+      instruction: {
+        chain: 'base',
+        asset: 'USDC',
+        address: '0x2222222222222222222222222222222222222222',
+      },
       provider: evmProvider,
     })
   })
@@ -833,7 +846,11 @@ describe('debug 开关', () => {
     await sendWalletPayment({
       provider: new MockEvmProvider(),
       amount: '1',
-      instruction: { chain: 'base', asset: 'USDC', address: '0x2222222222222222222222222222222222222222' },
+      instruction: {
+        chain: 'base',
+        asset: 'USDC',
+        address: '0x2222222222222222222222222222222222222222',
+      },
     })
     expect(spy).not.toHaveBeenCalled()
 
@@ -841,10 +858,16 @@ describe('debug 开关', () => {
     await sendWalletPayment({
       provider: new MockEvmProvider(),
       amount: '1',
-      instruction: { chain: 'base', asset: 'USDC', address: '0x2222222222222222222222222222222222222222' },
+      instruction: {
+        chain: 'base',
+        asset: 'USDC',
+        address: '0x2222222222222222222222222222222222222222',
+      },
     })
     expect(spy).toHaveBeenCalled()
     expect(spy.mock.calls.every(([first]) => String(first).startsWith('[wallet-sdk] '))).toBe(true)
-    expect(spy.mock.calls.some(([first]) => first === '[wallet-sdk] sendWalletPayment:start')).toBe(true)
+    expect(spy.mock.calls.some(([first]) => first === '[wallet-sdk] sendWalletPayment:start')).toBe(
+      true,
+    )
   })
 })

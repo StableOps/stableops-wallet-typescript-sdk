@@ -1,9 +1,4 @@
-import type {
-  Connection,
-  PublicKey,
-  Transaction,
-  TransactionInstruction,
-} from '@solana/web3.js'
+import type { Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 
 // @solana/web3.js 是可选 peer 依赖：仅 Solana 支付路径需要，懒加载以免
 // 只用 EVM/TRON 的使用者被迫安装，且缺失时抛出友好异常而非模块加载崩溃。
@@ -45,10 +40,7 @@ export type ChainId =
 
 export type Asset = 'USDC' | 'USDT'
 
-type EvmWalletChainId = Exclude<
-  ChainId,
-  'tron' | 'solana' | 'tron-nile' | 'solana-devnet'
->
+type EvmWalletChainId = Exclude<ChainId, 'tron' | 'solana' | 'tron-nile' | 'solana-devnet'>
 
 type WalletTokenContract = {
   chain: ChainId
@@ -204,10 +196,8 @@ const TRON_WALLET_CHAINS = ['tron', 'tron-nile'] as const
 const SOLANA_WALLET_CHAINS = ['solana', 'solana-devnet'] as const
 const ERC20_TRANSFER_SELECTOR = 'a9059cbb'
 const SOLANA_MAINNET_RPC_URL = 'https://api.mainnet-beta.solana.com'
-const SOLANA_TOKEN_PROGRAM_ID_BASE58 =
-  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58 =
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
+const SOLANA_TOKEN_PROGRAM_ID_BASE58 = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58 = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
 const SOLANA_TRANSFER_CHECKED_INSTRUCTION = 12
 const SOLANA_CREATE_ASSOCIATED_TOKEN_ACCOUNT_IDEMPOTENT_INSTRUCTION = 1
 
@@ -224,15 +214,9 @@ export type TronWalletProvider =
       tronWeb?: TronWebLike
       tronLink?: {
         tronWeb?: TronWebLike
-        request: <T = unknown>(args: {
-          method: string
-          params?: unknown
-        }) => Promise<T>
+        request: <T = unknown>(args: { method: string; params?: unknown }) => Promise<T>
       }
-      request?<T = unknown>(args: {
-        method: string
-        params?: unknown
-      }): Promise<T>
+      request?<T = unknown>(args: { method: string; params?: unknown }): Promise<T>
     }
 
 export type SolanaWalletProvider = {
@@ -240,16 +224,11 @@ export type SolanaWalletProvider = {
   connect?(): Promise<{
     publicKey?: SolanaPublicKeyLike | string | null
   } | void>
-  signAndSendTransaction?(
-    transaction: Transaction,
-  ): Promise<string | { signature?: string }>
+  signAndSendTransaction?(transaction: Transaction): Promise<string | { signature?: string }>
   signTransaction?(transaction: Transaction): Promise<Transaction>
 }
 
-export type WalletProvider =
-  | Eip1193Provider
-  | TronWalletProvider
-  | SolanaWalletProvider
+export type WalletProvider = Eip1193Provider | TronWalletProvider | SolanaWalletProvider
 
 type TronWebLike = {
   // TronLink 未连接/未就绪时把 base58 置为 false（而非缺省），类型如实反映以便正确判定就绪。
@@ -314,15 +293,10 @@ export type SendWalletPaymentInput = {
   fromAddress?: string
   chainConfigs?: Partial<Record<EvmWalletChainId, EvmWalletChainConfig>>
   solanaRpcUrl?: string
-  solanaConnection?: Pick<
-    Connection,
-    'getLatestBlockhash' | 'sendRawTransaction'
-  >
+  solanaConnection?: Pick<Connection, 'getLatestBlockhash' | 'sendRawTransaction'>
 }
 
-export type WalletProviderByChain = Partial<
-  Record<ChainId, WalletProvider | undefined>
->
+export type WalletProviderByChain = Partial<Record<ChainId, WalletProvider | undefined>>
 
 export type SendOrderWalletPaymentInput = Omit<
   SendWalletPaymentInput,
@@ -390,9 +364,7 @@ function walletDebug(event: string, data?: Record<string, unknown>): void {
   }
 }
 
-export const EvmWalletChainConfigs: Readonly<
-  Record<EvmWalletChainId, EvmWalletChainConfig>
-> = {
+export const EvmWalletChainConfigs: Readonly<Record<EvmWalletChainId, EvmWalletChainConfig>> = {
   ethereum: {
     chainId: 'ethereum',
     eip155ChainId: 1,
@@ -502,10 +474,7 @@ export function getInjectedTronProvider(): TronWalletProvider | undefined {
   const maybeGlobal = globalThis as typeof globalThis & {
     tronLink?: {
       tronWeb?: TronWebLike
-      request: <T = unknown>(args: {
-        method: string
-        params?: unknown
-      }) => Promise<T>
+      request: <T = unknown>(args: { method: string; params?: unknown }) => Promise<T>
     }
     tronWeb?: TronWebLike
   }
@@ -551,12 +520,8 @@ export function selectWalletPaymentInstruction(
     )
   }
   const preferred = preferredChains
-    .map((chain) =>
-      instructions.find((instruction) => instruction.chain === chain),
-    )
-    .filter((instruction): instruction is WalletPaymentInstruction =>
-      Boolean(instruction),
-    )
+    .map((chain) => instructions.find((instruction) => instruction.chain === chain))
+    .filter((instruction): instruction is WalletPaymentInstruction => Boolean(instruction))
   const candidates = [
     ...preferred,
     ...instructions.filter((instruction) => !preferred.includes(instruction)),
@@ -590,9 +555,7 @@ export async function sendOrderWalletPayment(
   })
 }
 
-export async function sendWalletPayment(
-  input: SendWalletPaymentInput,
-): Promise<SentWalletPayment> {
+export async function sendWalletPayment(input: SendWalletPaymentInput): Promise<SentWalletPayment> {
   const instruction = requireInstruction(input.instruction)
   const token = findWalletTokenContract(instruction.chain, instruction.asset)
   if (!token) {
@@ -618,11 +581,7 @@ export async function sendWalletPayment(
   try {
     let sent: SentWalletPayment
     if (isEvmWalletChain(instruction.chain)) {
-      sent = await sendEvmWalletPayment(
-        input,
-        { ...instruction, chain: instruction.chain },
-        token,
-      )
+      sent = await sendEvmWalletPayment(input, { ...instruction, chain: instruction.chain }, token)
     } else if (isTronWalletChain(instruction.chain)) {
       sent = await sendTronWalletPayment(input, instruction, token)
     } else if (isSolanaWalletChain(instruction.chain)) {
@@ -652,10 +611,7 @@ export async function sendWalletPayment(
   }
 }
 
-export function encodeErc20Transfer(
-  toAddress: string,
-  amountUnits: bigint,
-): string {
+export function encodeErc20Transfer(toAddress: string, amountUnits: bigint): string {
   const normalizedTo = normalizeEvmAddress(toAddress)
   if (amountUnits < 0n) {
     throw new StableOpsWalletError('Transfer amount cannot be negative', 'invalid_amount', {
@@ -694,8 +650,7 @@ export function parseTokenAmount(amount: string, decimals: number): bigint {
   }
 
   const units =
-    BigInt(whole) * 10n ** BigInt(decimals) +
-    BigInt(fraction.padEnd(decimals, '0') || '0')
+    BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0')
   if (units <= 0n) {
     throw new StableOpsWalletError('Transfer amount must be greater than 0', 'invalid_amount', {
       amount,
@@ -743,14 +698,7 @@ async function sendEvmWalletPayment(
   // 必须在此显式失败，否则上层会把一笔注定失败的交易当成「已支付」一直空等。
   await confirmEvmTransactionSuccess(provider, txHash)
 
-  return buildSentPayment(
-    txHash,
-    instruction,
-    token,
-    fromAddress,
-    input.amount,
-    amountUnits,
-  )
+  return buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits)
 }
 
 // EVM 回执轮询参数：默认每 ~2s 查一次，最长 ~90s。revert 与成功一样会很快上链，
@@ -848,8 +796,7 @@ async function sendTronWalletPayment(
   const signed = await tronWeb.trx.sign(built.transaction)
   walletDebug('tron:broadcast')
   const sent = await tronWeb.trx.sendRawTransaction(signed)
-  const txHash =
-    sent.txid ?? sent.transaction?.txID ?? getTronSignedTransactionId(signed)
+  const txHash = sent.txid ?? sent.transaction?.txID ?? getTronSignedTransactionId(signed)
   if (!txHash) {
     throw new StableOpsWalletError(
       'TRON wallet did not return a transaction hash',
@@ -862,14 +809,7 @@ async function sendTronWalletPayment(
   // OUT_OF_ENERGY）表示没有代币转出，订单永远不会 detected，必须在此显式失败。
   await confirmTronTransactionSuccess(tronWeb, txHash)
 
-  return buildSentPayment(
-    txHash,
-    instruction,
-    token,
-    fromAddress,
-    input.amount,
-    amountUnits,
-  )
+  return buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits)
 }
 
 // TRON 执行回执轮询参数：~3s 出块，每 ~3s 查一次，最长 ~90s。
@@ -880,10 +820,7 @@ const TRON_RECEIPT_TIMEOUT_MS = 90_000
 //   receipt.result 非 'SUCCESS'（REVERT / OUT_OF_ENERGY 等）→ 抛 wallet_tx_reverted。
 //   'SUCCESS' → 正常返回。
 //   老版本 tronWeb 无 getTransactionInfo / 超时仍无回执 → best-effort 放行，交给 scanner。
-async function confirmTronTransactionSuccess(
-  tronWeb: TronWebLike,
-  txID: string,
-): Promise<void> {
+async function confirmTronTransactionSuccess(tronWeb: TronWebLike, txID: string): Promise<void> {
   const getInfo = tronWeb.trx.getTransactionInfo
   if (typeof getInfo !== 'function') return
   const deadline = Date.now() + TRON_RECEIPT_TIMEOUT_MS
@@ -940,14 +877,9 @@ async function sendSolanaWalletPayment(
   })
   const connection =
     input.solanaConnection ??
-    new web3.Connection(
-      input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL,
-      'confirmed',
-    )
+    new web3.Connection(input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL, 'confirmed')
   const tokenProgramId = new web3.PublicKey(SOLANA_TOKEN_PROGRAM_ID_BASE58)
-  const associatedTokenProgramId = new web3.PublicKey(
-    SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58,
-  )
+  const associatedTokenProgramId = new web3.PublicKey(SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58)
   const sourceTokenAccount = findAssociatedTokenAddress(
     web3,
     payer,
@@ -999,23 +931,11 @@ async function sendSolanaWalletPayment(
 
   // 调用方显式提供 RPC/connection（如 playground devnet）时，锁定到目标 cluster 并本地广播，
   // 避免钱包按当前所选网络提交；详见 sendSolanaTransaction。
-  const txHash = await sendSolanaTransaction(
-    provider,
-    connection,
-    transaction,
-    preferLocalSend,
-  )
+  const txHash = await sendSolanaTransaction(provider, connection, transaction, preferLocalSend)
   // 拿到签名不代表交易执行成功。等待并校验签名状态：err 非空表示交易已落块但执行失败，
   // 没有代币转出、订单永远不会 detected，必须在此显式失败。
   await confirmSolanaTransactionSuccess(connection, txHash)
-  return buildSentPayment(
-    txHash,
-    instruction,
-    token,
-    payer.toBase58(),
-    input.amount,
-    amountUnits,
-  )
+  return buildSentPayment(txHash, instruction, token, payer.toBase58(), input.amount, amountUnits)
 }
 
 // Solana 签名状态轮询参数：每 ~2s 查一次，最长 ~90s。
@@ -1036,8 +956,7 @@ async function confirmSolanaTransactionSuccess(
   connection: unknown,
   signature: string,
 ): Promise<void> {
-  const getStatuses = (connection as SolanaSignatureStatusConnection)
-    .getSignatureStatuses
+  const getStatuses = (connection as SolanaSignatureStatusConnection).getSignatureStatuses
   if (typeof getStatuses !== 'function') return
   const deadline = Date.now() + SOLANA_STATUS_TIMEOUT_MS
   for (;;) {
@@ -1061,10 +980,7 @@ async function confirmSolanaTransactionSuccess(
           { txHash: signature, error: status.err },
         )
       }
-      if (
-        status.confirmationStatus === 'confirmed' ||
-        status.confirmationStatus === 'finalized'
-      ) {
+      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
         return
       }
     }
@@ -1108,24 +1024,15 @@ function isSolanaWalletChain(chain: ChainId): boolean {
   return (SOLANA_WALLET_CHAINS as readonly string[]).includes(chain)
 }
 
-function findWalletTokenContract(
-  chain: ChainId,
-  asset: Asset,
-): WalletTokenContract | undefined {
-  return WALLET_TOKEN_CONTRACTS.find(
-    (entry) => entry.chain === chain && entry.asset === asset,
-  )
+function findWalletTokenContract(chain: ChainId, asset: Asset): WalletTokenContract | undefined {
+  return WALLET_TOKEN_CONTRACTS.find((entry) => entry.chain === chain && entry.asset === asset)
 }
 
-function isEip1193Provider(
-  provider: WalletProvider,
-): provider is Eip1193Provider {
+function isEip1193Provider(provider: WalletProvider): provider is Eip1193Provider {
   return typeof (provider as Eip1193Provider).request === 'function'
 }
 
-async function requestFirstEvmAccount(
-  provider: Eip1193Provider,
-): Promise<string> {
+async function requestFirstEvmAccount(provider: Eip1193Provider): Promise<string> {
   const accounts = await provider.request<string[]>({
     method: 'eth_requestAccounts',
   })
@@ -1175,9 +1082,7 @@ function requireInstruction(
 
 function resolveChainConfig(
   chain: EvmWalletChainId,
-  overrides:
-    | Partial<Record<EvmWalletChainId, EvmWalletChainConfig>>
-    | undefined,
+  overrides: Partial<Record<EvmWalletChainId, EvmWalletChainConfig>> | undefined,
 ): EvmWalletChainConfig {
   const config = overrides?.[chain] ?? EvmWalletChainConfigs[chain]
   if (!config) {
@@ -1224,15 +1129,8 @@ function getTronWeb(provider: WalletProvider, preferLatest = false): TronWebLike
     tronLink?: { tronWeb?: TronWebLike }
     tronWeb?: TronWebLike
   }
-  const cachedCandidates = [
-    wrapper.tronLink?.tronWeb,
-    wrapper.tronWeb,
-    provider as TronWebLike,
-  ]
-  const latestCandidates = [
-    maybeGlobal.tronLink?.tronWeb,
-    maybeGlobal.tronWeb,
-  ]
+  const cachedCandidates = [wrapper.tronLink?.tronWeb, wrapper.tronWeb, provider as TronWebLike]
+  const latestCandidates = [maybeGlobal.tronLink?.tronWeb, maybeGlobal.tronWeb]
   const tronWeb = [
     ...(preferLatest ? latestCandidates : cachedCandidates),
     ...(preferLatest ? cachedCandidates : latestCandidates),
@@ -1269,9 +1167,9 @@ function isReadyTronWeb(value: unknown): value is TronWebLike {
   const tronWeb = value as TronWebLike | undefined
   return Boolean(
     tronWeb &&
-      typeof tronWeb.transactionBuilder?.triggerSmartContract === 'function' &&
-      typeof tronWeb.trx?.sign === 'function' &&
-      typeof tronWeb.trx?.sendRawTransaction === 'function',
+    typeof tronWeb.transactionBuilder?.triggerSmartContract === 'function' &&
+    typeof tronWeb.trx?.sign === 'function' &&
+    typeof tronWeb.trx?.sendRawTransaction === 'function',
   )
 }
 
@@ -1287,36 +1185,25 @@ function canAwaitTronWeb(provider: WalletProvider): boolean {
   }
   return Boolean(
     wrapper.tronLink?.request ||
-      wrapper.request ||
-      wrapper.tronLink?.tronWeb ||
-      wrapper.tronWeb ||
-      maybeGlobal.tronLink?.request ||
-      maybeGlobal.tronLink?.tronWeb ||
-      maybeGlobal.tronWeb,
+    wrapper.request ||
+    wrapper.tronLink?.tronWeb ||
+    wrapper.tronWeb ||
+    maybeGlobal.tronLink?.request ||
+    maybeGlobal.tronLink?.tronWeb ||
+    maybeGlobal.tronWeb,
   )
 }
 
 function getTronAccountRequester(
   provider: WalletProvider,
-):
-  | ((args: { method: string; params?: unknown }) => Promise<unknown>)
-  | undefined {
+): ((args: { method: string; params?: unknown }) => Promise<unknown>) | undefined {
   const wrapper = provider as {
     tronLink?: {
-      request: <T = unknown>(args: {
-        method: string
-        params?: unknown
-      }) => Promise<T>
+      request: <T = unknown>(args: { method: string; params?: unknown }) => Promise<T>
     }
-    request?<T = unknown>(args: {
-      method: string
-      params?: unknown
-    }): Promise<T>
+    request?<T = unknown>(args: { method: string; params?: unknown }): Promise<T>
   }
-  return (
-    wrapper.tronLink?.request?.bind(wrapper.tronLink) ??
-    wrapper.request?.bind(wrapper)
-  )
+  return wrapper.tronLink?.request?.bind(wrapper.tronLink) ?? wrapper.request?.bind(wrapper)
 }
 
 function getTronSignedTransactionId(signed: unknown): string | undefined {
@@ -1324,15 +1211,11 @@ function getTronSignedTransactionId(signed: unknown): string | undefined {
   return (signed as { txID?: string }).txID
 }
 
-async function requestSolanaPublicKey(
-  provider: SolanaWalletProvider,
-): Promise<string> {
+async function requestSolanaPublicKey(provider: SolanaWalletProvider): Promise<string> {
   const existing = solanaPublicKeyToString(provider.publicKey)
   if (existing) return existing
   const connected = await provider.connect?.()
-  const connectedKey = connected
-    ? solanaPublicKeyToString(connected.publicKey)
-    : undefined
+  const connectedKey = connected ? solanaPublicKeyToString(connected.publicKey) : undefined
   const providerKey = solanaPublicKeyToString(provider.publicKey)
   const publicKey = connectedKey ?? providerKey
   if (!publicKey) {
@@ -1402,11 +1285,10 @@ function publicKeyFromString(web3: SolanaWeb3, address: string): PublicKey {
   try {
     return new web3.PublicKey(address)
   } catch (err) {
-    throw new StableOpsWalletError(
-      'Invalid Solana address format',
-      'invalid_solana_address',
-      { address, cause: err },
-    )
+    throw new StableOpsWalletError('Invalid Solana address format', 'invalid_solana_address', {
+      address,
+      cause: err,
+    })
   }
 }
 
@@ -1478,11 +1360,7 @@ function createSplTokenTransferCheckedInstruction(
   })
 }
 
-function writeBigUInt64LE(
-  bytes: Uint8Array,
-  value: bigint,
-  offset: number,
-): void {
+function writeBigUInt64LE(bytes: Uint8Array, value: bigint, offset: number): void {
   if (value > 0xffffffffffffffffn) {
     throw new StableOpsWalletError('Transfer amount exceeds u64 range', 'invalid_amount', {
       amountUnits: value.toString(),
@@ -1573,11 +1451,9 @@ function delay(ms: number): Promise<void> {
 
 function normalizeTronAddress(address: string | undefined): string {
   if (!address || !TRON_ADDRESS_REGEX.test(address)) {
-    throw new StableOpsWalletError(
-      'Invalid TRON address format',
-      'invalid_tron_address',
-      { address },
-    )
+    throw new StableOpsWalletError('Invalid TRON address format', 'invalid_tron_address', {
+      address,
+    })
   }
   return address
 }

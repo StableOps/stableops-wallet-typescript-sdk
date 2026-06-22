@@ -53,10 +53,7 @@ yarn add @stableops/wallet-sdk
 使用后端返回的订单，并让 SDK 从浏览器里自动选择兼容的钱包 provider：
 
 ```ts
-import {
-  getInjectedWalletProviders,
-  sendOrderWalletPayment,
-} from '@stableops/wallet-sdk'
+import { getInjectedWalletProviders, sendOrderWalletPayment } from '@stableops/wallet-sdk'
 
 const sent = await sendOrderWalletPayment({
   order,
