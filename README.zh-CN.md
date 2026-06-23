@@ -61,6 +61,11 @@ const sent = await sendOrderWalletPayment({
 })
 
 console.log(sent.txHash)
+
+// 可选：在后台监听链上 revert。
+sent.confirmation.catch((err) => {
+  // err.code === 'wallet_tx_reverted'
+})
 ```
 
 这是最高层的调用方式。它会从订单候选链列表里选择一条当前浏览器可支付的指令，并通过匹配的钱包发起链上转账。
@@ -87,8 +92,36 @@ const sent = await sendWalletPayment({
   instruction,
 })
 
-console.log(sent)
+console.log(sent.txHash)
+
+// 可选：在后台监听链上 revert。
+sent.confirmation.catch((err) => {
+  // err.code === 'wallet_tx_reverted'
+})
 ```
+
+## 返回值
+
+### `SentWalletPayment`
+
+```ts
+{
+  txHash: string
+  chain: string
+  asset: string
+  tokenContract: string
+  amount: string
+  amountUnits: string
+  // 链上交易回执确认结果。resolve 表示交易已上链且合约执行成功（或超时 best-effort 放行），
+  // reject（code: 'wallet_tx_reverted'）表示链上 revert，没有代币转出。
+  // 不阻塞主支付流程返回。
+  confirmation: Promise<void>
+}
+```
+
+`confirmation` 是 **best-effort** 参考结果。它的设计目的是在交易发出后尽早捕获立即 revert（如余额不足），避免用户长时间等待后才发现失败。查询在后台进行，不延迟 `sendWalletPayment` 的返回。
+
+**重要**：服务端链上扫描结果是权威状态。如果 scanner 已推进订单状态（`detected` / `confirmed` 等），始终以服务端为准，忽略 `confirmation` 的 reject。
 
 ## 支持的钱包流程
 

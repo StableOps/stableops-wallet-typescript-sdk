@@ -72,6 +72,11 @@ const sent = await sendOrderWalletPayment({
 })
 
 console.log(sent.txHash)
+
+// Optional: listen for on-chain revert in the background.
+sent.confirmation.catch((err) => {
+  // err.code === 'wallet_tx_reverted'
+})
 ```
 
 This is the highest-level path. It selects a payable instruction from the
@@ -101,8 +106,42 @@ const sent = await sendWalletPayment({
   instruction,
 })
 
-console.log(sent)
+console.log(sent.txHash)
+
+// Optional: catch on-chain revert in the background.
+sent.confirmation.catch((err) => {
+  // err.code === 'wallet_tx_reverted'
+})
 ```
+
+## Return Value
+
+### `SentWalletPayment`
+
+```ts
+{
+  txHash: string
+  chain: string
+  asset: string
+  tokenContract: string
+  amount: string
+  amountUnits: string
+  // Resolves when the transaction succeeds on chain (or times out best-effort).
+  // Rejects with code 'wallet_tx_reverted' if the contract call reverted
+  // (e.g. insufficient balance). Does NOT block the main payment flow.
+  confirmation: Promise<void>
+}
+```
+
+`confirmation` is a **best-effort** hint. It lets the UI catch immediate reverts
+(such as an out-of-balance error) without waiting for the full server-side
+detection cycle. It runs in the background and does not delay `sendWalletPayment`
+from returning.
+
+**Important**: Server-side chain scanning is the authoritative source of truth.
+If the server has already advanced the payment order past `created`
+(`detected`, `confirmed`, etc.), always defer to the server state and ignore
+any `confirmation` rejection.
 
 ## Supported Wallet Flows
 

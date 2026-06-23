@@ -316,6 +316,13 @@ export type SentWalletPayment = {
   tokenContract: string
   amount: string
   amountUnits: string
+  /** 链上交易回执确认结果。仅供参考，以服务端 scanner 为准：
+   * resolve 表示交易已上链且合约执行成功（或超时 best-effort 放行），
+   * reject（wallet_tx_reverted）表示链上 revert，没有代币转出。
+   * 查询在后台进行，不阻塞支付流程返回；设计目的是在交易发出后尽早捕获
+   * 立即 revert（如余额不足），避免用户长时间等待后才发现失败。
+   * 若服务端 scanner 已推进订单状态（detected/confirmed），则以服务端为准。 */
+  confirmation: Promise<void>
 }
 
 export class StableOpsWalletError extends Error {
@@ -693,12 +700,13 @@ async function sendEvmWalletPayment(
     ],
   })
 
-  // eth_sendTransaction 返回只代表交易已广播进内存池，不代表上链成功。等待并校验回执：
-  // 若链上 revert（status 0x0，如代币余额不足），没有任何代币转出、订单永远不会 detected，
-  // 必须在此显式失败，否则上层会把一笔注定失败的交易当成「已支付」一直空等。
-  await confirmEvmTransactionSuccess(provider, txHash)
+  const confirmation = confirmEvmTransactionSuccess(provider, txHash)
+  confirmation.catch(() => {})
 
-  return buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits)
+  return {
+    ...buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits),
+    confirmation,
+  }
 }
 
 // EVM 回执轮询参数：默认每 ~2s 查一次，最长 ~90s。revert 与成功一样会很快上链，
@@ -805,11 +813,15 @@ async function sendTronWalletPayment(
     )
   }
 
-  // 广播返回 txid 不代表合约执行成功。等待并校验执行回执：result 非 SUCCESS（如 REVERT /
-  // OUT_OF_ENERGY）表示没有代币转出，订单永远不会 detected，必须在此显式失败。
-  await confirmTronTransactionSuccess(tronWeb, txHash)
+  // 广播后不阻塞：回执查询在后台进行（TRON getTransactionInfo 可能很慢），
+  // 通过 confirmation promise 将链上 revert 结果通知调用方。
+  const confirmation = confirmTronTransactionSuccess(tronWeb, txHash)
+  confirmation.catch(() => {})
 
-  return buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits)
+  return {
+    ...buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits),
+    confirmation,
+  }
 }
 
 // TRON 执行回执轮询参数：~3s 出块，每 ~3s 查一次，最长 ~90s。
@@ -932,10 +944,13 @@ async function sendSolanaWalletPayment(
   // 调用方显式提供 RPC/connection（如 playground devnet）时，锁定到目标 cluster 并本地广播，
   // 避免钱包按当前所选网络提交；详见 sendSolanaTransaction。
   const txHash = await sendSolanaTransaction(provider, connection, transaction, preferLocalSend)
-  // 拿到签名不代表交易执行成功。等待并校验签名状态：err 非空表示交易已落块但执行失败，
-  // 没有代币转出、订单永远不会 detected，必须在此显式失败。
-  await confirmSolanaTransactionSuccess(connection, txHash)
-  return buildSentPayment(txHash, instruction, token, payer.toBase58(), input.amount, amountUnits)
+  // 拿到签名后不阻塞：签名状态查询在后台进行（confirmation promise 将结果通知调用方）。
+  const confirmation = confirmSolanaTransactionSuccess(connection, txHash)
+  confirmation.catch(() => {})
+  return {
+    ...buildSentPayment(txHash, instruction, token, payer.toBase58(), input.amount, amountUnits),
+    confirmation,
+  }
 }
 
 // Solana 签名状态轮询参数：每 ~2s 查一次，最长 ~90s。
@@ -999,7 +1014,7 @@ function buildSentPayment(
   fromAddress: string,
   amount: string,
   amountUnits: bigint,
-): SentWalletPayment {
+): Omit<SentWalletPayment, 'confirmation'> {
   return {
     txHash,
     chain: instruction.chain,

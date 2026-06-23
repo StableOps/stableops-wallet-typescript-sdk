@@ -164,20 +164,20 @@ describe('sendWalletPayment', () => {
     expect(provider.calls[1]?.params).toEqual([{ chainId: '0x2105' }])
   })
 
-  it('EVM 交易回执 status=0x0（链上 revert，如代币余额不足）时抛错而非误报成功', async () => {
+  it('EVM 交易回执 status=0x0（链上 revert，如代币余额不足）时 confirmation 抛错而非误报成功', async () => {
     const provider = new MockEvmProvider({ receiptStatus: '0x0' })
 
-    await expect(
-      sendWalletPayment({
-        provider,
-        amount: '10',
-        instruction: {
-          chain: 'base',
-          asset: 'USDC',
-          address: '0x2222222222222222222222222222222222222222',
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'wallet_tx_reverted' })
+    const result = await sendWalletPayment({
+      provider,
+      amount: '10',
+      instruction: {
+        chain: 'base',
+        asset: 'USDC',
+        address: '0x2222222222222222222222222222222222222222',
+      },
+    })
+
+    await expect(result.confirmation).rejects.toMatchObject({ code: 'wallet_tx_reverted' })
 
     // 必须真的查过回执才能判断 revert。
     expect(provider.calls.map((call) => call.method)).toContain('eth_getTransactionReceipt')
@@ -235,36 +235,6 @@ describe('sendWalletPayment', () => {
     ])
   })
 
-  it('TRON 交易回执 result 非 SUCCESS（链上失败）时抛错而非误报成功', async () => {
-    const tronWeb = {
-      defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
-      transactionBuilder: {
-        triggerSmartContract: async () => ({ transaction: { raw_data: {} } }),
-      },
-      trx: {
-        sign: async (transaction: unknown) => ({ transaction, txID: 'TRON_TX_ID' }),
-        sendRawTransaction: async () => ({ result: true, txid: 'TRON_TX_HASH' }),
-        // 回执 result=REVERT：交易已上链但合约执行失败，没有代币转出。
-        getTransactionInfo: async () => ({
-          id: 'TRON_TX_HASH',
-          receipt: { result: 'REVERT' },
-        }),
-      },
-    }
-
-    await expect(
-      sendWalletPayment({
-        provider: { tronWeb },
-        amount: '1',
-        instruction: {
-          chain: 'tron',
-          asset: 'USDT',
-          address: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN',
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'wallet_tx_reverted' })
-  })
-
   it('TRON 回执 result=SUCCESS 时正常返回 txHash', async () => {
     const tronWeb = {
       defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
@@ -290,6 +260,65 @@ describe('sendWalletPayment', () => {
         address: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN',
       },
     })
+    await expect(result.confirmation).resolves.toBeUndefined()
+    expect(result.txHash).toBe('TRON_TX_HASH')
+  })
+
+  it('TRON 交易回执 result 非 SUCCESS（链上失败）时 confirmation 抛错而非误报成功', async () => {
+    const tronWeb = {
+      defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
+      transactionBuilder: {
+        triggerSmartContract: async () => ({ transaction: { raw_data: {} } }),
+      },
+      trx: {
+        sign: async (transaction: unknown) => ({ transaction, txID: 'TRON_TX_ID' }),
+        sendRawTransaction: async () => ({ result: true, txid: 'TRON_TX_HASH' }),
+        getTransactionInfo: async () => ({
+          id: 'TRON_TX_HASH',
+          receipt: { result: 'REVERT' },
+        }),
+      },
+    }
+
+    const result = await sendWalletPayment({
+      provider: { tronWeb },
+      amount: '1',
+      instruction: {
+        chain: 'tron',
+        asset: 'USDT',
+        address: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN',
+      },
+    })
+
+    await expect(result.confirmation).rejects.toMatchObject({ code: 'wallet_tx_reverted' })
+  })
+
+  it('TRON 回执 result=SUCCESS 时 confirmation 正常 resolve', async () => {
+    const tronWeb = {
+      defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
+      transactionBuilder: {
+        triggerSmartContract: async () => ({ transaction: { raw_data: {} } }),
+      },
+      trx: {
+        sign: async (transaction: unknown) => ({ transaction, txID: 'TRON_TX_ID' }),
+        sendRawTransaction: async () => ({ result: true, txid: 'TRON_TX_HASH' }),
+        getTransactionInfo: async () => ({
+          id: 'TRON_TX_HASH',
+          receipt: { result: 'SUCCESS' },
+        }),
+      },
+    }
+
+    const result = await sendWalletPayment({
+      provider: { tronWeb },
+      amount: '1',
+      instruction: {
+        chain: 'tron',
+        asset: 'USDT',
+        address: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN',
+      },
+    })
+    await expect(result.confirmation).resolves.toBeUndefined()
     expect(result.txHash).toBe('TRON_TX_HASH')
   })
 
@@ -468,7 +497,7 @@ describe('sendWalletPayment', () => {
     )
   })
 
-  it('Solana 交易状态带 err（链上失败）时抛错而非误报成功', async () => {
+  it('Solana 交易状态带 err（链上失败）时 confirmation 抛错而非误报成功', async () => {
     const provider = new MockSolanaProvider()
     const failingConnection = {
       ...solanaConnection,
@@ -483,18 +512,18 @@ describe('sendWalletPayment', () => {
       }),
     }
 
-    await expect(
-      sendWalletPayment({
-        provider,
-        amount: '1',
-        solanaConnection: failingConnection,
-        instruction: {
-          chain: 'solana',
-          asset: 'USDC',
-          address: 'So11111111111111111111111111111111111111112',
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'wallet_tx_reverted' })
+    const result = await sendWalletPayment({
+      provider,
+      amount: '1',
+      solanaConnection: failingConnection,
+      instruction: {
+        chain: 'solana',
+        asset: 'USDC',
+        address: 'So11111111111111111111111111111111111111112',
+      },
+    })
+
+    await expect(result.confirmation).rejects.toMatchObject({ code: 'wallet_tx_reverted' })
   })
 
   it('Solana 交易状态 err 为 null 且 confirmed 时正常返回签名', async () => {
@@ -516,6 +545,7 @@ describe('sendWalletPayment', () => {
         address: 'So11111111111111111111111111111111111111112',
       },
     })
+    await expect(result.confirmation).resolves.toBeUndefined()
     expect(result.txHash).toBe('SOLANA_SIGNATURE')
   })
 
