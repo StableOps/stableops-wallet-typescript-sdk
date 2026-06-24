@@ -29,6 +29,7 @@ flow details, see the official documentation:
 - EVM wallet support via EIP-1193 providers.
 - TRON wallet support via TronLink / TronWeb providers.
 - Solana wallet support via wallet adapters.
+- Mobile wallet support via WalletConnect v2 (deep links + QR fallback).
 - Automatic candidate selection from available injected wallets.
 - Chain-specific token transfer helpers for ERC-20, TRC-20, and SPL tokens.
 - Self-contained public types with no StableOps workspace dependencies.
@@ -82,6 +83,52 @@ sent.confirmation.catch((err) => {
 This is the highest-level path. It selects a payable instruction from the
 order's candidate list and sends the on-chain transfer through the first
 matching provider.
+
+## Mobile / WalletConnect
+
+Mobile browsers (Safari / Chrome on iOS or Android, outside an in-wallet
+browser) do not expose `window.ethereum` and cannot be probed for installed
+wallets. To support this flow, use the optional WalletConnect helper. It opens
+the official WalletConnect modal that lists installed wallets, deep-links into
+the chosen wallet app, and falls back to a QR code when no wallet is detected.
+
+The helper covers EVM chains only. Desktop extensions and in-wallet browsers
+continue to work through `getInjectedWalletProviders()` and do not require a
+`projectId`.
+
+```bash
+npm install @walletconnect/ethereum-provider
+```
+
+```ts
+import { createWalletConnectConnection, sendOrderWalletPayment } from '@stableops/wallet-sdk'
+
+const wc = await createWalletConnectConnection({
+  // Free account at https://cloud.reown.com
+  projectId: 'YOUR_REOWN_PROJECT_ID',
+  metadata: {
+    name: 'My App',
+    description: 'Pay with stablecoins',
+    url: 'https://myapp.com',
+    icons: ['https://myapp.com/icon.png'],
+  },
+})
+
+// Triggers the WalletConnect modal: pick a wallet → deep link → sign → return.
+await wc.connect()
+
+const sent = await sendOrderWalletPayment({
+  order,
+  providers: wc.providers,
+})
+
+console.log(sent.txHash)
+```
+
+`createWalletConnectConnection` accepts an optional `chains` subset (defaults
+to all EVM chains) and a `rpcMap` override keyed by EIP-155 chain id. Use
+`wc.onDisplayUri(uri => ...)` if you want to render the QR yourself, and
+`wc.disconnect()` to tear the session down.
 
 ## Manual Selection
 

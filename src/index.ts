@@ -20,6 +20,26 @@ async function loadSolanaWeb3(): Promise<SolanaWeb3> {
   return solanaWeb3Promise
 }
 
+// @walletconnect/ethereum-provider 也是可选 peer 依赖：仅移动端 / WalletConnect 连接路径需要。
+// 失败时抛出可读异常,避免「找不到模块」的原始报错让接入方摸不着头脑。
+type WalletConnectModule = typeof import('@walletconnect/ethereum-provider')
+
+let walletConnectModulePromise: Promise<WalletConnectModule> | undefined
+
+async function loadWalletConnect(): Promise<WalletConnectModule> {
+  if (!walletConnectModulePromise) {
+    walletConnectModulePromise = import('@walletconnect/ethereum-provider').catch((err) => {
+      walletConnectModulePromise = undefined
+      throw new StableOpsWalletError(
+        'WalletConnect mobile connections require the optional dependency @walletconnect/ethereum-provider; please install it: npm install @walletconnect/ethereum-provider',
+        'walletconnect_dependency_missing',
+        { cause: err },
+      )
+    })
+  }
+  return walletConnectModulePromise
+}
+
 export type ChainId =
   | 'ethereum'
   | 'base'
@@ -513,6 +533,167 @@ export function getInjectedWalletProviders(): WalletProviderByChain {
     for (const chain of SOLANA_WALLET_CHAINS) providers[chain] = solanaProvider
   }
   return providers
+}
+
+// ── WalletConnect (mobile) ─────────────────────────────────────────────────
+// 用于手机浏览器(非钱包内置浏览器)无注入 provider 的场景:WC 模态框自带钱包列表 / 深链
+// 拉起 App / 二维码降级。SDK 不内置 projectId 与 metadata,由接入方在 Reown Cloud 申请。
+//
+// 返回对象的 provider 字段类型用 SDK 内已有的最小契约 Eip1193Provider,不暴露 WC 内部类型;
+// display_uri 订阅与会话断开通过 helper 暴露,够覆盖所有调用方需求;如需更高级控制可 cast。
+
+export type WalletConnectMetadata = {
+  name: string
+  description: string
+  url: string
+  icons: string[]
+}
+
+export type CreateWalletConnectInput = {
+  projectId: string
+  metadata: WalletConnectMetadata
+  // 默认全部 EVM_WALLET_CHAINS;入参指定子集只在这些链上请求授权。
+  chains?: EvmWalletChainId[]
+  // 默认 true:WC 自带的钱包选择 + 深链 + 二维码模态框。设为 false 时需要自己监听
+  // onDisplayUri 拿 URI 绘制自定义 UI。
+  showQrModal?: boolean
+  // key 是 eip155 chainId,value 是 RPC 端点。默认由 EvmWalletChainConfigs[c].rpcUrls[0] 派生,
+  // 入参的同 key 覆盖默认值。
+  rpcMap?: Partial<Record<number, string>>
+  qrModalOptions?: Record<string, unknown>
+}
+
+export type WalletConnectConnection = {
+  // 原始 WC provider,EIP-1193 兼容;可直接传给 sendWalletPayment 的 provider 字段。
+  // 在 connect() 完成前,调用其 request 会因为没有会话而失败。
+  provider: Eip1193Provider
+  // 所请求的每条 EVM 链 key 都指向同一 provider;形态与 getInjectedWalletProviders() 一致。
+  providers: WalletProviderByChain
+  // 触发模态框 / 深链;返回钱包授权的账户。重复调用不重复 init。
+  connect(): Promise<string[]>
+  disconnect(): Promise<void>
+  // 订阅 display_uri 事件;返回 unsubscribe。
+  onDisplayUri(cb: (uri: string) => void): () => void
+}
+
+// 同步把原错误挂到 details + native Error.cause,让 apps/web 的 isUserRejectedWalletError
+// (走 error.cause?.code === 4001) 在用户取消时仍能识别。
+function wrapWalletConnectError(message: string, cause: unknown): StableOpsWalletError {
+  const wrapped = new StableOpsWalletError(message, 'walletconnect_connect_failed', { cause })
+  ;(wrapped as { cause?: unknown }).cause = cause
+  return wrapped
+}
+
+type WalletConnectProviderLike = Eip1193Provider & {
+  enable(): Promise<string[]>
+  disconnect(): Promise<void>
+  on(event: 'display_uri', cb: (uri: string) => void): unknown
+  removeListener?: (event: 'display_uri', cb: (uri: string) => void) => unknown
+}
+
+export async function createWalletConnectConnection(
+  input: CreateWalletConnectInput,
+): Promise<WalletConnectConnection> {
+  if (!input.projectId) {
+    throw new StableOpsWalletError(
+      'WalletConnect projectId is required; obtain one from https://cloud.reown.com',
+      'walletconnect_project_id_missing',
+    )
+  }
+
+  const chains = input.chains ?? [...EVM_WALLET_CHAINS]
+  const eip155Chains = chains.map((c) => EvmWalletChainConfigs[c].eip155ChainId)
+  const defaultRpcMap: Record<number, string> = {}
+  for (const c of chains) {
+    const cfg = EvmWalletChainConfigs[c]
+    const rpc = cfg.rpcUrls[0]
+    if (rpc) defaultRpcMap[cfg.eip155ChainId] = rpc
+  }
+  const rpcMap: Record<number, string> = { ...defaultRpcMap }
+  for (const [k, v] of Object.entries(input.rpcMap ?? {})) {
+    if (typeof v === 'string') rpcMap[Number(k)] = v
+  }
+
+  // 闭包内单例:首次 connect() 时 init,后续 connect() 复用同一个 provider。
+  let providerPromise: Promise<WalletConnectProviderLike> | undefined
+  function getProvider(): Promise<WalletConnectProviderLike> {
+    if (!providerPromise) {
+      providerPromise = (async () => {
+        const mod = await loadWalletConnect()
+        try {
+          return (await mod.EthereumProvider.init({
+            projectId: input.projectId,
+            metadata: input.metadata,
+            optionalChains: eip155Chains as [number, ...number[]],
+            rpcMap,
+            showQrModal: input.showQrModal ?? true,
+            qrModalOptions: input.qrModalOptions as never,
+          })) as unknown as WalletConnectProviderLike
+        } catch (err) {
+          providerPromise = undefined
+          throw wrapWalletConnectError('WalletConnect initialization failed', err)
+        }
+      })()
+    }
+    return providerPromise
+  }
+
+  // providers 在 connect() 之前是空对象,connect() 完成后被填充。调用方约定:必须先 connect()
+  // 再把 providers 喂给 sendOrderWalletPayment。SDK 的 selectWalletPaymentInstruction 在没有
+  // 可用 provider 时本就会抛 wallet_provider_not_found,顺序错了能被同一条错误路径捕获。
+  const providers: WalletProviderByChain = {}
+
+  // provider 字段:暴露一个稳定引用,内部代理到 connect() 解析后的实际 provider;
+  // 在 connect() 完成前调用 request 会因没有会话失败,该行为与 WC 原生一致。
+  const proxyProvider: Eip1193Provider = {
+    async request<T = unknown>(args: {
+      method: string
+      params?: unknown[] | Record<string, unknown>
+    }): Promise<T> {
+      const p = await getProvider()
+      return p.request<T>(args)
+    },
+  }
+
+  return {
+    provider: proxyProvider,
+    providers,
+    async connect(): Promise<string[]> {
+      const p = await getProvider()
+      let accounts: string[]
+      try {
+        accounts = await p.enable()
+      } catch (err) {
+        // 用户取消(4001)等业务错误透传 cause,让 isUserRejectedWalletError 仍能识别。
+        throw wrapWalletConnectError('WalletConnect connection failed', err)
+      }
+      for (const c of chains) providers[c] = p as unknown as WalletProvider
+      return accounts
+    },
+    async disconnect(): Promise<void> {
+      if (!providerPromise) return
+      try {
+        const p = await providerPromise
+        await p.disconnect()
+      } finally {
+        providerPromise = undefined
+        for (const c of chains) delete providers[c]
+      }
+    },
+    onDisplayUri(cb: (uri: string) => void): () => void {
+      let unsubscribed = false
+      let attached: WalletConnectProviderLike | undefined
+      void getProvider().then((p) => {
+        if (unsubscribed) return
+        attached = p
+        p.on('display_uri', cb)
+      })
+      return () => {
+        unsubscribed = true
+        attached?.removeListener?.('display_uri', cb)
+      }
+    },
+  }
 }
 
 export function selectWalletPaymentInstruction(
