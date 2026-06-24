@@ -60,7 +60,7 @@ export type ChainId =
 
 export type Asset = 'USDC' | 'USDT'
 
-type EvmWalletChainId = Exclude<ChainId, 'tron' | 'solana' | 'tron-nile' | 'solana-devnet'>
+export type EvmWalletChainId = Exclude<ChainId, 'tron' | 'solana' | 'tron-nile' | 'solana-devnet'>
 
 type WalletTokenContract = {
   chain: ChainId
@@ -314,6 +314,9 @@ export type SendWalletPaymentInput = {
   chainConfigs?: Partial<Record<EvmWalletChainId, EvmWalletChainConfig>>
   solanaRpcUrl?: string
   solanaConnection?: Pick<Connection, 'getLatestBlockhash' | 'sendRawTransaction'>
+  /** WalletConnect 场景跳过链切换（optionalChains 已在 session 协商阶段处理）；
+   *  注入式 provider 仍需 ensureEvmChain 保证目标链就绪。 */
+  skipChainSwitch?: boolean
 }
 
 export type WalletProviderByChain = Partial<Record<ChainId, WalletProvider | undefined>>
@@ -865,8 +868,12 @@ async function sendEvmWalletPayment(
     input.fromAddress ?? (await requestFirstEvmAccount(provider)),
   )
   walletDebug('evm:from', { chain: instruction.chain, fromAddress })
-  await ensureEvmChain(provider, config)
-  walletDebug('evm:chain-ready', { eip155ChainId: config.eip155ChainId })
+  if (!input.skipChainSwitch) {
+    await ensureEvmChain(provider, config)
+    walletDebug('evm:chain-ready', { eip155ChainId: config.eip155ChainId })
+  } else {
+    walletDebug('evm:skip-chain-switch', { eip155ChainId: config.eip155ChainId })
+  }
 
   const amountUnits = parseTokenAmount(input.amount, token.decimals)
   const txHash = await provider.request<string>({
