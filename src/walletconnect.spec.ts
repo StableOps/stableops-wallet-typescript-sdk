@@ -26,6 +26,7 @@ const wcMock = vi.hoisted(() => {
     initError: null as unknown,
     accounts: ['0x1111111111111111111111111111111111111111'],
     enableWait: undefined as Promise<void> | undefined,
+    enableCalls: 0,
   }
 
   const makeFakeProvider = (): FakeProvider => {
@@ -43,6 +44,7 @@ const wcMock = vi.hoisted(() => {
         return null
       },
       async enable() {
+        state.enableCalls++
         if (state.enableError) throw state.enableError
         await state.enableWait
         return state.accounts
@@ -119,6 +121,7 @@ beforeEach(() => {
   wcMock.state.initError = null
   wcMock.state.accounts = ['0x1111111111111111111111111111111111111111']
   wcMock.state.enableWait = undefined
+  wcMock.state.enableCalls = 0
 })
 
 describe('createWalletConnectController', () => {
@@ -234,6 +237,29 @@ describe('createWalletConnectController', () => {
       amountUnits: '10500000',
     })
     await sent.confirmation
+  })
+
+  it('coalesces repeated connect calls on the same controller', async () => {
+    let releaseEnable!: () => void
+    wcMock.state.enableWait = new Promise((resolve) => {
+      releaseEnable = resolve
+    })
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: ['base'],
+    })
+
+    const first = controller.connect({ walletId: 'metamask' })
+    const second = controller.connect({ walletId: 'metamask' })
+    releaseEnable()
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      wcMock.state.accounts,
+      wcMock.state.accounts,
+    ])
+    expect(wcMock.state.initCalls).toBe(1)
+    expect(wcMock.state.enableCalls).toBe(1)
   })
 
   it('disconnects the WalletConnect provider and clears providers', async () => {

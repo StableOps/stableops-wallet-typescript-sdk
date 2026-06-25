@@ -126,6 +126,9 @@ export async function createWalletConnectController(
   let state: WalletConnectControllerState = { status: 'idle', wallets }
   let providerPromise: Promise<WalletConnectProviderLike> | undefined
   let displayUriListener: ((uri: string) => void) | undefined
+  // 单飞 connect：同一个 controller 上并发 / 重复点击只跑一次 enable，避免在 WC SDK
+  // 内部产生重复的 proposal/session 导致 "No matching key" 噪音日志。
+  let connectInflight: Promise<string[]> | undefined
 
   function setState(next: WalletConnectControllerState): void {
     state = next
@@ -200,37 +203,46 @@ export async function createWalletConnectController(
       }
     },
     async connect(connectInput) {
+      if (state.status === 'connected') return state.accounts
+      if (connectInflight) return connectInflight
       const selectedWallet = getSelectedWallet(connectInput?.walletId)
       setState({ status: 'connecting', wallets, selectedWallet })
-      let provider: WalletConnectProviderLike
+      connectInflight = (async () => {
+        let provider: WalletConnectProviderLike
+        try {
+          provider = await getProvider()
+        } catch (err) {
+          const error =
+            err instanceof StableOpsWalletError
+              ? err
+              : wrapWalletConnectError(
+                  'WalletConnect initialization failed',
+                  'walletconnect_init_failed',
+                  err,
+                )
+          setState({ status: 'failed', wallets, error })
+          throw error
+        }
+        attachDisplayUriListener(provider, selectedWallet)
+        try {
+          const accounts = await provider.enable()
+          for (const chain of chains) providers[chain] = provider as unknown as WalletProvider
+          setState({ status: 'connected', wallets, accounts })
+          return accounts
+        } catch (err) {
+          const error = wrapWalletConnectError(
+            'WalletConnect connection failed',
+            'walletconnect_connect_failed',
+            err,
+          )
+          setState({ status: 'failed', wallets, error })
+          throw error
+        }
+      })()
       try {
-        provider = await getProvider()
-      } catch (err) {
-        const error =
-          err instanceof StableOpsWalletError
-            ? err
-            : wrapWalletConnectError(
-                'WalletConnect initialization failed',
-                'walletconnect_init_failed',
-                err,
-              )
-        setState({ status: 'failed', wallets, error })
-        throw error
-      }
-      attachDisplayUriListener(provider, selectedWallet)
-      try {
-        const accounts = await provider.enable()
-        for (const chain of chains) providers[chain] = provider as unknown as WalletProvider
-        setState({ status: 'connected', wallets, accounts })
-        return accounts
-      } catch (err) {
-        const error = wrapWalletConnectError(
-          'WalletConnect connection failed',
-          'walletconnect_connect_failed',
-          err,
-        )
-        setState({ status: 'failed', wallets, error })
-        throw error
+        return await connectInflight
+      } finally {
+        connectInflight = undefined
       }
     },
     async disconnect() {
@@ -248,6 +260,7 @@ export async function createWalletConnectController(
         await provider.disconnect()
       } finally {
         providerPromise = undefined
+        connectInflight = undefined
         clearProviders()
         setState({ status: 'disconnected', wallets })
       }
