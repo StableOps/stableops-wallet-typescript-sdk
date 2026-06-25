@@ -7,6 +7,9 @@ const wcMock = vi.hoisted(() => {
     calls: Array<{ method: string; params?: unknown[] | Record<string, unknown> }>
     listeners: Map<string, Set<Listener>>
     disconnected: boolean
+    session?: {
+      namespaces?: Record<string, { accounts?: string[]; chains?: string[] }>
+    }
     request: (args: {
       method: string
       params?: unknown[] | Record<string, unknown>
@@ -27,6 +30,7 @@ const wcMock = vi.hoisted(() => {
     accounts: ['0x1111111111111111111111111111111111111111'],
     enableWait: undefined as Promise<void> | undefined,
     enableCalls: 0,
+    sessionChains: undefined as string[] | undefined,
   }
 
   const makeFakeProvider = (): FakeProvider => {
@@ -47,6 +51,18 @@ const wcMock = vi.hoisted(() => {
         state.enableCalls++
         if (state.enableError) throw state.enableError
         await state.enableWait
+        if (state.sessionChains) {
+          provider.session = {
+            namespaces: {
+              eip155: {
+                chains: state.sessionChains,
+                accounts: state.sessionChains.map(
+                  (chain) => `${chain}:0x1111111111111111111111111111111111111111`,
+                ),
+              },
+            },
+          }
+        }
         return state.accounts
       },
       async disconnect() {
@@ -122,6 +138,7 @@ beforeEach(() => {
   wcMock.state.accounts = ['0x1111111111111111111111111111111111111111']
   wcMock.state.enableWait = undefined
   wcMock.state.enableCalls = 0
+  wcMock.state.sessionChains = undefined
 })
 
 describe('createWalletConnectController', () => {
@@ -192,10 +209,8 @@ describe('createWalletConnectController', () => {
       metadata: METADATA,
       showQrModal: false,
       customStoragePrefix: expect.stringMatching(/^stableops-walletconnect-/),
-      optionalChains: [
-        EvmWalletChainConfigs.base.eip155ChainId,
-        EvmWalletChainConfigs.arbitrum.eip155ChainId,
-      ],
+      chains: [EvmWalletChainConfigs.base.eip155ChainId],
+      optionalChains: [EvmWalletChainConfigs.arbitrum.eip155ChainId],
     })
     expect(wcMock.state.initOpts?.rpcMap).toEqual({
       8453: 'https://custom-base-rpc',
@@ -238,6 +253,20 @@ describe('createWalletConnectController', () => {
       amountUnits: '10500000',
     })
     await sent.confirmation
+  })
+
+  it('only exposes WalletConnect providers for session-authorized chains', async () => {
+    wcMock.state.sessionChains = [`eip155:${EvmWalletChainConfigs.base.eip155ChainId}`]
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: ['base', 'ethereum-sepolia'],
+    })
+
+    await controller.connect()
+
+    expect(controller.providers.base).toBe(wcMock.state.fakeProvider)
+    expect(controller.providers['ethereum-sepolia']).toBeUndefined()
   })
 
   it('coalesces repeated connect calls on the same controller', async () => {

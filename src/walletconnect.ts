@@ -82,6 +82,9 @@ export type WalletConnectController = {
 type WalletConnectProviderLike = Eip1193Provider & {
   enable(): Promise<string[]>
   disconnect(): Promise<void>
+  session?: {
+    namespaces?: Record<string, { accounts?: string[]; chains?: string[] }>
+  }
   on(event: 'display_uri', cb: (uri: string) => void): unknown
   removeListener?: (event: 'display_uri', cb: (uri: string) => void) => unknown
 }
@@ -120,7 +123,11 @@ export async function createWalletConnectController(
 
   const wallets = input.wallets ?? []
   const chains = input.chains ?? [...EVM_WALLET_CHAINS]
-  const optionalChains = chains.map((chain) => EvmWalletChainConfigs[chain].eip155ChainId)
+  const requiredChain = chains[0]
+  const requiredChains = requiredChain ? [EvmWalletChainConfigs[requiredChain].eip155ChainId] : []
+  const optionalChains = chains
+    .slice(1)
+    .map((chain) => EvmWalletChainConfigs[chain].eip155ChainId)
   const rpcMap = buildRpcMap(chains, input.rpcMap)
   const storagePrefix = `stableops-walletconnect-${Date.now()}-${++walletConnectControllerSequence}`
   const providers: WalletProviderByChain = {}
@@ -146,6 +153,34 @@ export async function createWalletConnectController(
     for (const chain of chains) delete providers[chain]
   }
 
+  function getAuthorizedChainIds(provider: WalletConnectProviderLike): Set<number> | undefined {
+    const namespaces = provider.session?.namespaces
+    if (!namespaces) return undefined
+    const authorized = new Set<number>()
+    for (const namespace of Object.values(namespaces)) {
+      for (const chain of namespace.chains ?? []) {
+        const match = /^eip155:(\d+)$/.exec(chain)
+        if (match?.[1]) authorized.add(Number(match[1]))
+      }
+      for (const account of namespace.accounts ?? []) {
+        const match = /^eip155:(\d+):/.exec(account)
+        if (match?.[1]) authorized.add(Number(match[1]))
+      }
+    }
+    return authorized
+  }
+
+  function fillAuthorizedProviders(provider: WalletConnectProviderLike): void {
+    clearProviders()
+    const authorized = getAuthorizedChainIds(provider)
+    for (const chain of chains) {
+      const chainId = EvmWalletChainConfigs[chain].eip155ChainId
+      if (!authorized || authorized.has(chainId)) {
+        providers[chain] = provider as unknown as WalletProvider
+      }
+    }
+  }
+
   function attachDisplayUriListener(
     provider: WalletConnectProviderLike,
     selectedWallet: WalletConnectWalletOption | undefined,
@@ -165,7 +200,8 @@ export async function createWalletConnectController(
           return (await mod.EthereumProvider.init({
             projectId: input.projectId,
             metadata: input.metadata,
-            optionalChains: optionalChains as [number, ...number[]],
+            chains: requiredChains as [number, ...number[]],
+            optionalChains,
             rpcMap,
             showQrModal: false,
             customStoragePrefix: storagePrefix,
@@ -229,7 +265,7 @@ export async function createWalletConnectController(
         attachDisplayUriListener(provider, selectedWallet)
         try {
           const accounts = await provider.enable()
-          for (const chain of chains) providers[chain] = provider as unknown as WalletProvider
+          fillAuthorizedProviders(provider)
           setState({ status: 'connected', wallets, accounts })
           return accounts
         } catch (err) {
