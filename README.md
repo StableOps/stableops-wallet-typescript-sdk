@@ -114,6 +114,59 @@ sent.confirmation.catch((err) => {
 })
 ```
 
+## WalletConnect with Custom UI
+
+For mobile browsers or pages without an injected EVM provider, create a
+WalletConnect controller and render your own wallet picker and QR dialog.
+The SDK does not ship UI and does not maintain a wallet list; pass your wallet
+options in and subscribe to controller state.
+
+Install the optional WalletConnect runtime in applications that use this path:
+
+```bash
+npm install @walletconnect/ethereum-provider
+```
+
+```ts
+import { createWalletConnectController, sendOrderWalletPayment } from '@stableops/wallet-sdk'
+
+const walletConnect = await createWalletConnectController({
+  projectId: 'YOUR_REOWN_PROJECT_ID',
+  metadata: {
+    name: 'Your App',
+    description: 'StableOps checkout',
+    url: window.location.origin,
+    icons: [`${window.location.origin}/icon.png`],
+  },
+  chains: ['base', 'arbitrum'],
+  wallets: [
+    {
+      id: 'metamask',
+      name: 'MetaMask',
+      links: {
+        native: 'metamask://',
+        universal: 'https://metamask.app.link',
+      },
+    },
+  ],
+})
+
+const unsubscribe = walletConnect.subscribe((state) => {
+  // Render your wallet picker, QR code, loading state, or error state here.
+  // state.status === 'uri_ready' includes state.uri for QR rendering.
+})
+
+await walletConnect.connect({ walletId: 'metamask' })
+
+const sent = await sendOrderWalletPayment({
+  order,
+  providers: walletConnect.providers,
+})
+
+unsubscribe()
+console.log(sent.txHash)
+```
+
 ## Return Value
 
 ### `SentWalletPayment`

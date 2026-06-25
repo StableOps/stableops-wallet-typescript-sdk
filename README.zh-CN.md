@@ -100,6 +100,58 @@ sent.confirmation.catch((err) => {
 })
 ```
 
+## WalletConnect 自定义 UI
+
+移动端浏览器或没有注入 EVM provider 的页面，可以创建 WalletConnect controller，
+并由你的应用自己渲染钱包选择和二维码弹窗。SDK 不内置 UI，也不维护钱包列表；
+钱包选项由外部传入，界面通过订阅 controller state 渲染。
+
+使用这条路径的应用需要额外安装可选 WalletConnect 运行时：
+
+```bash
+npm install @walletconnect/ethereum-provider
+```
+
+```ts
+import { createWalletConnectController, sendOrderWalletPayment } from '@stableops/wallet-sdk'
+
+const walletConnect = await createWalletConnectController({
+  projectId: 'YOUR_REOWN_PROJECT_ID',
+  metadata: {
+    name: 'Your App',
+    description: 'StableOps checkout',
+    url: window.location.origin,
+    icons: [`${window.location.origin}/icon.png`],
+  },
+  chains: ['base', 'arbitrum'],
+  wallets: [
+    {
+      id: 'metamask',
+      name: 'MetaMask',
+      links: {
+        native: 'metamask://',
+        universal: 'https://metamask.app.link',
+      },
+    },
+  ],
+})
+
+const unsubscribe = walletConnect.subscribe((state) => {
+  // 在这里渲染自定义钱包列表、二维码、连接中或错误状态。
+  // state.status === 'uri_ready' 时可读取 state.uri 生成二维码。
+})
+
+await walletConnect.connect({ walletId: 'metamask' })
+
+const sent = await sendOrderWalletPayment({
+  order,
+  providers: walletConnect.providers,
+})
+
+unsubscribe()
+console.log(sent.txHash)
+```
+
 ## 返回值
 
 ### `SentWalletPayment`
