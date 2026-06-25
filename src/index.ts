@@ -17,6 +17,14 @@ export type {
   SentWalletPayment,
 } from './types'
 
+export type {
+  CreateWalletConnectControllerInput,
+  WalletConnectController,
+  WalletConnectControllerState,
+  WalletConnectMetadata,
+  WalletConnectWalletOption,
+} from './walletconnect'
+
 export { StableOpsWalletError, setWalletSdkDebug, isWalletSdkDebugEnabled } from './errors'
 
 export { EvmWalletChainConfigs } from './chains'
@@ -33,5 +41,7 @@ export {
   sendOrderWalletPayment,
   sendWalletPayment,
 } from './payment'
+
+export { createWalletConnectController } from './walletconnect'
 
 export { encodeErc20Transfer, parseTokenAmount } from './helpers'
