@@ -10,6 +10,7 @@ import type {
 type WalletConnectModule = typeof import('@walletconnect/ethereum-provider')
 
 let walletConnectModulePromise: Promise<WalletConnectModule> | undefined
+let walletConnectControllerSequence = 0
 
 async function loadWalletConnect(): Promise<WalletConnectModule> {
   if (!walletConnectModulePromise) {
@@ -121,6 +122,7 @@ export async function createWalletConnectController(
   const chains = input.chains ?? [...EVM_WALLET_CHAINS]
   const optionalChains = chains.map((chain) => EvmWalletChainConfigs[chain].eip155ChainId)
   const rpcMap = buildRpcMap(chains, input.rpcMap)
+  const storagePrefix = `stableops-walletconnect-${Date.now()}-${++walletConnectControllerSequence}`
   const providers: WalletProviderByChain = {}
   const listeners = new Set<(state: WalletConnectControllerState) => void>()
   let state: WalletConnectControllerState = { status: 'idle', wallets }
@@ -166,6 +168,7 @@ export async function createWalletConnectController(
             optionalChains: optionalChains as [number, ...number[]],
             rpcMap,
             showQrModal: false,
+            customStoragePrefix: storagePrefix,
           })) as unknown as WalletConnectProviderLike
         } catch (err) {
           providerPromise = undefined

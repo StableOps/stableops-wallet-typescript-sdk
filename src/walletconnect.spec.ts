@@ -191,6 +191,7 @@ describe('createWalletConnectController', () => {
       projectId: 'pid',
       metadata: METADATA,
       showQrModal: false,
+      customStoragePrefix: expect.stringMatching(/^stableops-walletconnect-/),
       optionalChains: [
         EvmWalletChainConfigs.base.eip155ChainId,
         EvmWalletChainConfigs.arbitrum.eip155ChainId,
