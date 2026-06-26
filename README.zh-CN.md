@@ -1,6 +1,6 @@
 # StableOps Wallet SDK
 
-StableOps 官方浏览器钱包支付辅助 SDK。
+[![npm version](https://img.shields.io/npm/v/@stableops/wallet-sdk)](https://www.npmjs.com/package/@stableops/wallet-sdk) [![npm downloads](https://img.shields.io/npm/dm/@stableops/wallet-sdk)](https://www.npmjs.com/package/@stableops/wallet-sdk) [![License](https://img.shields.io/npm/l/@stableops/wallet-sdk)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org)
 
 [View English README](./README.md)
 
@@ -144,10 +144,7 @@ sent.confirmation.catch((err) => {
 - 链：Ethereum、Base、Arbitrum、Polygon、TRON、Solana 以及支持的测试网。
 - 资产：USDC 和 USDT。
 
-最新支持范围和环境配置请参考官方文档：
-
-- https://stableops.dev/zh/docs
-- https://stableops.dev/en/docs
+最新支持范围和环境配置请参考官方文档。
 
 ## 常见使用方式
 

@@ -1,6 +1,6 @@
 # StableOps Wallet SDK
 
-Official TypeScript wallet helper for StableOps checkout flows.
+[![npm version](https://img.shields.io/npm/v/@stableops/wallet-sdk)](https://www.npmjs.com/package/@stableops/wallet-sdk) [![npm downloads](https://img.shields.io/npm/dm/@stableops/wallet-sdk)](https://www.npmjs.com/package/@stableops/wallet-sdk) [![License](https://img.shields.io/npm/l/@stableops/wallet-sdk)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org)
 
 [中文文档](./README.zh-CN.md)
 
@@ -165,10 +165,7 @@ This SDK supports:
 - Assets: USDC and USDT.
 
 See the official docs for the latest supported chains, assets, and environment
-guidance:
-
-- https://stableops.dev/en/docs
-- https://stableops.dev/zh/docs
+guidance.
 
 ## Common Usage Notes
 
