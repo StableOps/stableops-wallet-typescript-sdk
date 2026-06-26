@@ -1,0 +1,96 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+          pnpm --version
+
+      - name: Resolve workspace dependencies
+        run: |
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process')
+          const { readFileSync, writeFileSync } = require('node:fs')
+
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+          const sections = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
+          let changed = false
+
+          for (const section of sections) {
+            const deps = pkg[section]
+            if (!deps) continue
+
+            for (const [name, range] of Object.entries(deps)) {
+              if (typeof range !== 'string' || !range.startsWith('workspace:')) continue
+
+              const latest = execFileSync('npm', ['view', name, 'version'], { encoding: 'utf8' }).trim()
+              const workspaceRange = range.slice('workspace:'.length)
+              const prefix = workspaceRange === '*' ? '^' : workspaceRange
+              deps[name] = `${prefix}${latest}`
+              changed = true
+            }
+          }
+
+          if (changed) {
+            writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`)
+          }
+          NODE
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag v${TAG_VERSION} does not match package.json version ${PACKAGE_VERSION}."
+            exit 1
+          fi
+
+      - name: Publish package
+        run: npm publish --access public
