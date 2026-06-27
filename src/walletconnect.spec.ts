@@ -371,6 +371,42 @@ describe('createWalletConnectController', () => {
     expect(controller.providers['tron-nile']).toBeUndefined()
   })
 
+  it('keeps all WalletConnect session accounts in connected state and clears requested providers', async () => {
+    wcMock.state.sessionNamespaces = {
+      eip155: {
+        accounts: ['eip155:8453:0x1111111111111111111111111111111111111111'],
+      },
+      solana: {
+        accounts: [
+          'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1:So11111111111111111111111111111111111111112',
+        ],
+      },
+    }
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: ['base'],
+      solanaChains: ['solana-devnet'],
+    })
+
+    await controller.connect()
+
+    expect(controller.getState()).toMatchObject({
+      status: 'connected',
+      accounts: [
+        'eip155:8453:0x1111111111111111111111111111111111111111',
+        'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1:So11111111111111111111111111111111111111112',
+      ],
+    })
+    expect(controller.providers.base).toBeDefined()
+    expect(controller.providers['solana-devnet']).toBeDefined()
+
+    await controller.disconnect()
+
+    expect(controller.providers.base).toBeUndefined()
+    expect(controller.providers['solana-devnet']).toBeUndefined()
+  })
+
   it('coalesces repeated connect calls on the same controller', async () => {
     let releaseConnect!: () => void
     wcMock.state.connectWait = new Promise((resolve) => {
