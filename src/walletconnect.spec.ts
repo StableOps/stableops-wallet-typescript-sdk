@@ -4,17 +4,24 @@ const wcMock = vi.hoisted(() => {
   type Listener = (...args: unknown[]) => void
 
   type FakeProvider = {
-    calls: Array<{ method: string; params?: unknown[] | Record<string, unknown> }>
+    calls: Array<{
+      args: { method: string; params?: unknown[] | Record<string, unknown> }
+      chainId?: string
+    }>
+    connectOpts?: Record<string, unknown>
     listeners: Map<string, Set<Listener>>
     disconnected: boolean
     session?: {
       namespaces?: Record<string, { accounts?: string[]; chains?: string[] }>
     }
-    request: (args: {
-      method: string
-      params?: unknown[] | Record<string, unknown>
-    }) => Promise<unknown>
-    enable: () => Promise<string[]>
+    request: (
+      args: {
+        method: string
+        params?: unknown[] | Record<string, unknown>
+      },
+      chainId?: string,
+    ) => Promise<unknown>
+    connect: (opts: Record<string, unknown>) => Promise<unknown>
     disconnect: () => Promise<void>
     on: (event: string, cb: Listener) => FakeProvider
     removeListener: (event: string, cb: Listener) => FakeProvider
@@ -28,9 +35,10 @@ const wcMock = vi.hoisted(() => {
     enableError: null as unknown,
     initError: null as unknown,
     accounts: ['0x1111111111111111111111111111111111111111'],
-    enableWait: undefined as Promise<void> | undefined,
-    enableCalls: 0,
+    connectWait: undefined as Promise<void> | undefined,
+    connectCalls: 0,
     sessionChains: undefined as string[] | undefined,
+    sessionNamespaces: undefined as Record<string, { accounts?: string[]; chains?: string[] }> | undefined,
   }
 
   const makeFakeProvider = (): FakeProvider => {
@@ -39,19 +47,22 @@ const wcMock = vi.hoisted(() => {
       calls: [],
       listeners,
       disconnected: false,
-      async request(args) {
-        provider.calls.push(args)
+      async request(args, chainId) {
+        provider.calls.push({ args, chainId })
         if (args.method === 'eth_requestAccounts') return state.accounts
         if (args.method === 'wallet_switchEthereumChain') return null
         if (args.method === 'eth_sendTransaction') return '0xTXHASH'
         if (args.method === 'eth_getTransactionReceipt') return { status: '0x1' }
         return null
       },
-      async enable() {
-        state.enableCalls++
+      async connect(opts) {
+        state.connectCalls++
+        provider.connectOpts = opts
         if (state.enableError) throw state.enableError
-        await state.enableWait
-        if (state.sessionChains) {
+        await state.connectWait
+        if (state.sessionNamespaces) {
+          provider.session = { namespaces: state.sessionNamespaces }
+        } else if (state.sessionChains) {
           provider.session = {
             namespaces: {
               eip155: {
@@ -62,8 +73,17 @@ const wcMock = vi.hoisted(() => {
               },
             },
           }
+        } else {
+          provider.session = {
+            namespaces: {
+              eip155: {
+                chains: ['eip155:8453'],
+                accounts: ['eip155:8453:0x1111111111111111111111111111111111111111'],
+              },
+            },
+          }
         }
-        return state.accounts
+        return provider.session
       },
       async disconnect() {
         provider.disconnected = true
@@ -136,9 +156,10 @@ beforeEach(() => {
   wcMock.state.enableError = null
   wcMock.state.initError = null
   wcMock.state.accounts = ['0x1111111111111111111111111111111111111111']
-  wcMock.state.enableWait = undefined
-  wcMock.state.enableCalls = 0
+  wcMock.state.connectWait = undefined
+  wcMock.state.connectCalls = 0
   wcMock.state.sessionChains = undefined
+  wcMock.state.sessionNamespaces = undefined
 })
 
 describe('createWalletConnectController', () => {
@@ -160,9 +181,9 @@ describe('createWalletConnectController', () => {
   })
 
   it('publishes connecting and uri_ready states with the externally selected wallet', async () => {
-    let releaseEnable!: () => void
-    wcMock.state.enableWait = new Promise((resolve) => {
-      releaseEnable = resolve
+    let releaseConnect!: () => void
+    wcMock.state.connectWait = new Promise((resolve) => {
+      releaseConnect = resolve
     })
     const controller = await createWalletConnectController({
       projectId: 'pid',
@@ -176,7 +197,7 @@ describe('createWalletConnectController', () => {
     const connectPromise = controller.connect({ walletId: 'metamask' })
     await vi.waitFor(() => expect(wcMock.state.fakeProvider).toBeDefined())
     wcMock.state.fakeProvider?.emit('display_uri', 'wc:test-uri')
-    releaseEnable()
+    releaseConnect()
     await connectPromise
     unsubscribe()
 
@@ -189,12 +210,16 @@ describe('createWalletConnectController', () => {
           selectedWallet: WALLETS[0],
           uri: 'wc:test-uri',
         },
-        { status: 'connected', wallets: WALLETS, accounts: wcMock.state.accounts },
+        {
+          status: 'connected',
+          wallets: WALLETS,
+          accounts: ['eip155:8453:0x1111111111111111111111111111111111111111'],
+        },
       ]),
     )
   })
 
-  it('initializes WalletConnect with custom UI mode and derived EVM chains', async () => {
+  it('connects WalletConnect with custom UI mode and derived EVM namespaces', async () => {
     const controller = await createWalletConnectController({
       projectId: 'pid',
       metadata: METADATA,
@@ -207,16 +232,52 @@ describe('createWalletConnectController', () => {
     expect(wcMock.state.initOpts).toMatchObject({
       projectId: 'pid',
       metadata: METADATA,
-      showQrModal: false,
       customStoragePrefix: expect.stringMatching(/^stableops-walletconnect-/),
-      chains: [EvmWalletChainConfigs.base.eip155ChainId],
-      optionalChains: [EvmWalletChainConfigs.arbitrum.eip155ChainId],
     })
-    expect(wcMock.state.initOpts?.rpcMap).toEqual({
-      8453: 'https://custom-base-rpc',
-      [EvmWalletChainConfigs.arbitrum.eip155ChainId]:
-        EvmWalletChainConfigs.arbitrum.rpcUrls[0],
+    expect(wcMock.state.initOpts).not.toHaveProperty('chains')
+    expect(wcMock.state.initOpts).not.toHaveProperty('optionalChains')
+    expect(wcMock.state.fakeProvider?.connectOpts).toMatchObject({
+      optionalNamespaces: {
+        eip155: {
+          chains: ['eip155:8453', 'eip155:42161'],
+          methods: expect.arrayContaining(['eth_sendTransaction', 'wallet_switchEthereumChain']),
+          events: expect.arrayContaining(['chainChanged', 'accountsChanged']),
+          rpcMap: {
+            8453: 'https://custom-base-rpc',
+            [EvmWalletChainConfigs.arbitrum.eip155ChainId]:
+              EvmWalletChainConfigs.arbitrum.rpcUrls[0],
+          },
+        },
+      },
     })
+  })
+
+  it('omits disabled WalletConnect namespaces and rejects empty authorization', async () => {
+    wcMock.state.sessionNamespaces = {}
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: [],
+      solanaChains: ['solana-devnet'],
+    })
+
+    await expect(controller.connect()).rejects.toMatchObject({
+      code: 'walletconnect_no_authorized_chains',
+    })
+    expect(wcMock.state.fakeProvider?.connectOpts).toMatchObject({
+      optionalNamespaces: {
+        solana: {
+          chains: ['solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'],
+          methods: expect.arrayContaining(['solana_signTransaction']),
+          events: expect.arrayContaining(['accountsChanged']),
+        },
+      },
+    })
+    const optionalNamespaces = wcMock.state.fakeProvider?.connectOpts
+      ?.optionalNamespaces as Record<string, unknown>
+    expect(optionalNamespaces.eip155).toBeUndefined()
+    expect(optionalNamespaces.tron).toBeUndefined()
+    expect(controller.providers.solana).toBeUndefined()
   })
 
   it('fills providers after connect and supports sendOrderWalletPayment', async () => {
@@ -228,7 +289,7 @@ describe('createWalletConnectController', () => {
 
     await controller.connect()
 
-    expect(controller.providers.base).toBe(wcMock.state.fakeProvider)
+    expect(controller.providers.base).toBeDefined()
 
     const sent = await sendOrderWalletPayment({
       order: {
@@ -265,14 +326,14 @@ describe('createWalletConnectController', () => {
 
     await controller.connect()
 
-    expect(controller.providers.base).toBe(wcMock.state.fakeProvider)
+    expect(controller.providers.base).toBeDefined()
     expect(controller.providers['ethereum-sepolia']).toBeUndefined()
   })
 
   it('coalesces repeated connect calls on the same controller', async () => {
-    let releaseEnable!: () => void
-    wcMock.state.enableWait = new Promise((resolve) => {
-      releaseEnable = resolve
+    let releaseConnect!: () => void
+    wcMock.state.connectWait = new Promise((resolve) => {
+      releaseConnect = resolve
     })
     const controller = await createWalletConnectController({
       projectId: 'pid',
@@ -282,14 +343,14 @@ describe('createWalletConnectController', () => {
 
     const first = controller.connect({ walletId: 'metamask' })
     const second = controller.connect({ walletId: 'metamask' })
-    releaseEnable()
+    releaseConnect()
 
     await expect(Promise.all([first, second])).resolves.toEqual([
-      wcMock.state.accounts,
-      wcMock.state.accounts,
+      ['eip155:8453:0x1111111111111111111111111111111111111111'],
+      ['eip155:8453:0x1111111111111111111111111111111111111111'],
     ])
     expect(wcMock.state.initCalls).toBe(1)
-    expect(wcMock.state.enableCalls).toBe(1)
+    expect(wcMock.state.connectCalls).toBe(1)
   })
 
   it('disconnects the WalletConnect provider and clears providers', async () => {

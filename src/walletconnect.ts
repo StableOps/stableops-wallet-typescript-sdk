@@ -1,6 +1,20 @@
-import { EVM_WALLET_CHAINS, EvmWalletChainConfigs } from './chains'
+import {
+  EVM_WALLET_CHAINS,
+  EvmWalletChainConfigs,
+  WALLETCONNECT_ACCOUNT_EVENTS,
+  WALLETCONNECT_EVM_METHODS,
+  WALLETCONNECT_SOLANA_METHODS,
+  WALLETCONNECT_TRON_METHODS,
+} from './chains'
 import { StableOpsWalletError } from './errors'
+import { createEvmProviderFromUniversal, type UniversalProviderLike } from './walletconnect-adapters'
+import {
+  getAuthorizedWalletChains,
+  toWalletConnectChainId,
+  type WalletConnectSessionNamespaces,
+} from './walletconnect-caip'
 import type {
+  ChainId,
   Eip1193Provider,
   EvmWalletChainId,
   WalletProvider,
@@ -50,6 +64,8 @@ export type CreateWalletConnectControllerInput = {
   metadata: WalletConnectMetadata
   chains?: EvmWalletChainId[]
   rpcMap?: Partial<Record<number, string>>
+  solanaChains?: Array<'solana' | 'solana-devnet'>
+  tronChains?: Array<'tron' | 'tron-nile'>
   wallets?: WalletConnectWalletOption[]
 }
 
@@ -79,15 +95,24 @@ export type WalletConnectController = {
   disconnect(): Promise<void>
 }
 
-type WalletConnectProviderLike = Eip1193Provider & {
-  enable(): Promise<string[]>
+type WalletConnectProviderLike = UniversalProviderLike & {
+  connect(input: { optionalNamespaces: WalletConnectOptionalNamespaces }): Promise<unknown>
   disconnect(): Promise<void>
   session?: {
-    namespaces?: Record<string, { accounts?: string[]; chains?: string[] }>
+    namespaces?: WalletConnectSessionNamespaces
   }
   on(event: 'display_uri', cb: (uri: string) => void): unknown
   removeListener?: (event: 'display_uri', cb: (uri: string) => void) => unknown
 }
+
+type WalletConnectOptionalNamespace = {
+  chains: string[]
+  methods: readonly string[]
+  events: readonly string[]
+  rpcMap?: Record<number, string>
+}
+
+type WalletConnectOptionalNamespaces = Record<string, WalletConnectOptionalNamespace>
 
 function wrapWalletConnectError(message: string, code: string, cause: unknown): StableOpsWalletError {
   const wrapped = new StableOpsWalletError(message, code, { cause })
@@ -111,6 +136,44 @@ function buildRpcMap(
   return rpcMap
 }
 
+function buildOptionalNamespaces(input: {
+  evmChains: readonly EvmWalletChainId[]
+  solanaChains: readonly Array<'solana' | 'solana-devnet'>
+  tronChains: readonly Array<'tron' | 'tron-nile'>
+  rpcMap: Record<number, string>
+}): WalletConnectOptionalNamespaces {
+  const optionalNamespaces: WalletConnectOptionalNamespaces = {}
+  if (input.evmChains.length > 0) {
+    optionalNamespaces.eip155 = {
+      chains: input.evmChains.map(toWalletConnectChainId),
+      methods: WALLETCONNECT_EVM_METHODS,
+      events: WALLETCONNECT_ACCOUNT_EVENTS,
+      rpcMap: input.rpcMap,
+    }
+  }
+  if (input.solanaChains.length > 0) {
+    optionalNamespaces.solana = {
+      chains: input.solanaChains.map(toWalletConnectChainId),
+      methods: WALLETCONNECT_SOLANA_METHODS,
+      events: WALLETCONNECT_ACCOUNT_EVENTS,
+    }
+  }
+  if (input.tronChains.length > 0) {
+    optionalNamespaces.tron = {
+      chains: input.tronChains.map(toWalletConnectChainId),
+      methods: WALLETCONNECT_TRON_METHODS,
+      events: WALLETCONNECT_ACCOUNT_EVENTS,
+    }
+  }
+  return optionalNamespaces
+}
+
+function getSessionAccounts(provider: WalletConnectProviderLike): string[] {
+  return Object.values(provider.session?.namespaces ?? {}).flatMap(
+    (namespace) => namespace.accounts ?? [],
+  )
+}
+
 export async function createWalletConnectController(
   input: CreateWalletConnectControllerInput,
 ): Promise<WalletConnectController> {
@@ -122,20 +185,25 @@ export async function createWalletConnectController(
   }
 
   const wallets = input.wallets ?? []
-  const chains = input.chains ?? [...EVM_WALLET_CHAINS]
-  const requiredChain = chains[0]
-  const requiredChains = requiredChain ? [EvmWalletChainConfigs[requiredChain].eip155ChainId] : []
-  const optionalChains = chains
-    .slice(1)
-    .map((chain) => EvmWalletChainConfigs[chain].eip155ChainId)
-  const rpcMap = buildRpcMap(chains, input.rpcMap)
+  const evmChains = input.chains ?? [...EVM_WALLET_CHAINS]
+  const solanaChains = input.solanaChains ?? []
+  const tronChains = input.tronChains ?? []
+  const requestedChains: ChainId[] = [...evmChains, ...solanaChains, ...tronChains]
+  const defaultEvmChain = evmChains[0]
+  const rpcMap = buildRpcMap(evmChains, input.rpcMap)
+  const optionalNamespaces = buildOptionalNamespaces({
+    evmChains,
+    solanaChains,
+    tronChains,
+    rpcMap,
+  })
   const storagePrefix = `stableops-walletconnect-${Date.now()}-${++walletConnectControllerSequence}`
   const providers: WalletProviderByChain = {}
   const listeners = new Set<(state: WalletConnectControllerState) => void>()
   let state: WalletConnectControllerState = { status: 'idle', wallets }
   let providerPromise: Promise<WalletConnectProviderLike> | undefined
   let displayUriListener: ((uri: string) => void) | undefined
-  // 单飞 connect：同一个 controller 上并发 / 重复点击只跑一次 enable，避免在 WC SDK
+  // 单飞 connect：同一个 controller 上并发 / 重复点击只跑一次 connect，避免在 WC SDK
   // 内部产生重复的 proposal/session 导致 "No matching key" 噪音日志。
   let connectInflight: Promise<string[]> | undefined
 
@@ -150,34 +218,33 @@ export async function createWalletConnectController(
   }
 
   function clearProviders(): void {
-    for (const chain of chains) delete providers[chain]
-  }
-
-  function getAuthorizedChainIds(provider: WalletConnectProviderLike): Set<number> | undefined {
-    const namespaces = provider.session?.namespaces
-    if (!namespaces) return undefined
-    const authorized = new Set<number>()
-    for (const namespace of Object.values(namespaces)) {
-      for (const chain of namespace.chains ?? []) {
-        const match = /^eip155:(\d+)$/.exec(chain)
-        if (match?.[1]) authorized.add(Number(match[1]))
-      }
-      for (const account of namespace.accounts ?? []) {
-        const match = /^eip155:(\d+):/.exec(account)
-        if (match?.[1]) authorized.add(Number(match[1]))
-      }
-    }
-    return authorized
+    for (const chain of requestedChains) delete providers[chain]
   }
 
   function fillAuthorizedProviders(provider: WalletConnectProviderLike): void {
     clearProviders()
-    const authorized = getAuthorizedChainIds(provider)
-    for (const chain of chains) {
-      const chainId = EvmWalletChainConfigs[chain].eip155ChainId
-      if (!authorized || authorized.has(chainId)) {
-        providers[chain] = provider as unknown as WalletProvider
+    const namespaces = provider.session?.namespaces
+    const authorized = namespaces ? getAuthorizedWalletChains(namespaces) : undefined
+    for (const chain of evmChains) {
+      if (!authorized || authorized.has(chain)) {
+        providers[chain] = createEvmProviderFromUniversal(
+          provider,
+          toWalletConnectChainId(chain),
+        ) as WalletProvider
       }
+    }
+  }
+
+  function assertHasAuthorizedChain(provider: WalletConnectProviderLike): void {
+    const namespaces = provider.session?.namespaces
+    if (!namespaces) return
+    const authorized = getAuthorizedWalletChains(namespaces)
+    const hasRequestedAuthorization = requestedChains.some((chain) => authorized.has(chain))
+    if (!hasRequestedAuthorization) {
+      throw new StableOpsWalletError(
+        'WalletConnect wallet did not authorize any requested chain',
+        'walletconnect_no_authorized_chains',
+      )
     }
   }
 
@@ -200,10 +267,6 @@ export async function createWalletConnectController(
           return (await mod.default.init({
             projectId: input.projectId,
             metadata: input.metadata,
-            chains: requiredChains as [number, ...number[]],
-            optionalChains,
-            rpcMap,
-            showQrModal: false,
             customStoragePrefix: storagePrefix,
           })) as unknown as WalletConnectProviderLike
         } catch (err) {
@@ -224,8 +287,16 @@ export async function createWalletConnectController(
       method: string
       params?: unknown[] | Record<string, unknown>
     }): Promise<T> {
+      if (!defaultEvmChain) {
+        throw new StableOpsWalletError(
+          'WalletConnect controller does not have a default EVM provider',
+          'wallet_provider_mismatch',
+        )
+      }
       const provider = await getProvider()
-      return provider.request<T>(args)
+      return createEvmProviderFromUniversal(provider, toWalletConnectChainId(defaultEvmChain)).request<T>(
+        args,
+      )
     },
   }
 
@@ -264,16 +335,21 @@ export async function createWalletConnectController(
         }
         attachDisplayUriListener(provider, selectedWallet)
         try {
-          const accounts = await provider.enable()
+          await provider.connect({ optionalNamespaces })
+          assertHasAuthorizedChain(provider)
           fillAuthorizedProviders(provider)
+          const accounts = getSessionAccounts(provider)
           setState({ status: 'connected', wallets, accounts })
           return accounts
         } catch (err) {
-          const error = wrapWalletConnectError(
-            'WalletConnect connection failed',
-            'walletconnect_connect_failed',
-            err,
-          )
+          const error =
+            err instanceof StableOpsWalletError
+              ? err
+              : wrapWalletConnectError(
+                  'WalletConnect connection failed',
+                  'walletconnect_connect_failed',
+                  err,
+                )
           setState({ status: 'failed', wallets, error })
           throw error
         }
