@@ -330,6 +330,29 @@ describe('createWalletConnectController', () => {
     expect(controller.providers['ethereum-sepolia']).toBeUndefined()
   })
 
+  it('exposes Solana WalletConnect providers for authorized session accounts', async () => {
+    wcMock.state.sessionNamespaces = {
+      solana: {
+        accounts: [
+          'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1:So11111111111111111111111111111111111111112',
+        ],
+      },
+    }
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: [],
+      solanaChains: ['solana-devnet'],
+    })
+
+    await controller.connect()
+
+    expect(controller.providers['solana-devnet']).toMatchObject({
+      publicKey: 'So11111111111111111111111111111111111111112',
+    })
+    expect(controller.providers.solana).toBeUndefined()
+  })
+
   it('coalesces repeated connect calls on the same controller', async () => {
     let releaseConnect!: () => void
     wcMock.state.connectWait = new Promise((resolve) => {

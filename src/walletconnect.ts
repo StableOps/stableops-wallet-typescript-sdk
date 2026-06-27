@@ -7,9 +7,14 @@ import {
   WALLETCONNECT_TRON_METHODS,
 } from './chains'
 import { StableOpsWalletError } from './errors'
-import { createEvmProviderFromUniversal, type UniversalProviderLike } from './walletconnect-adapters'
+import {
+  createEvmProviderFromUniversal,
+  createSolanaProviderFromUniversal,
+  type UniversalProviderLike,
+} from './walletconnect-adapters'
 import {
   getAuthorizedWalletChains,
+  parseWalletConnectAccount,
   toWalletConnectChainId,
   type WalletConnectSessionNamespaces,
 } from './walletconnect-caip'
@@ -174,6 +179,20 @@ function getSessionAccounts(provider: WalletConnectProviderLike): string[] {
   )
 }
 
+function getSessionAccountForChain(
+  namespaces: WalletConnectSessionNamespaces | undefined,
+  chain: ChainId,
+): string | undefined {
+  const caip2 = toWalletConnectChainId(chain)
+  for (const namespace of Object.values(namespaces ?? {})) {
+    for (const account of namespace.accounts ?? []) {
+      const parsed = parseWalletConnectAccount(account)
+      if (parsed?.chainId === caip2) return parsed.accountAddress
+    }
+  }
+  return undefined
+}
+
 export async function createWalletConnectController(
   input: CreateWalletConnectControllerInput,
 ): Promise<WalletConnectController> {
@@ -231,6 +250,18 @@ export async function createWalletConnectController(
           provider,
           toWalletConnectChainId(chain),
         ) as WalletProvider
+      }
+    }
+    for (const chain of solanaChains) {
+      if (!authorized || authorized.has(chain)) {
+        const account = getSessionAccountForChain(namespaces, chain)
+        if (account) {
+          providers[chain] = createSolanaProviderFromUniversal(
+            provider,
+            toWalletConnectChainId(chain),
+            account,
+          ) as WalletProvider
+        }
       }
     }
   }
