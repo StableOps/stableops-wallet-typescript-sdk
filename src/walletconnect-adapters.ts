@@ -115,3 +115,28 @@ export function createSolanaProviderFromUniversal(
     },
   }
 }
+
+export type WalletConnectUnsupportedTronProvider = {
+  walletConnectTron: true
+  chainId: 'tron:0x2b6653dc' | 'tron:0xcd8690dc'
+  account: string
+  request<T = unknown>(args: { method: string; params?: unknown }): Promise<T>
+}
+
+export function createTronProviderFromUniversal(
+  _provider: UniversalProviderLike,
+  chainId: 'tron:0x2b6653dc' | 'tron:0xcd8690dc',
+  account: string,
+): WalletConnectUnsupportedTronProvider {
+  return {
+    walletConnectTron: true,
+    chainId,
+    account,
+    async request() {
+      throw new StableOpsWalletError(
+        'TRON WalletConnect payments are not supported until transaction construction, signing, and broadcast are verified for a target wallet',
+        'walletconnect_tron_unsupported',
+      )
+    },
+  }
+}

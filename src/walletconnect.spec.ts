@@ -353,6 +353,24 @@ describe('createWalletConnectController', () => {
     expect(controller.providers.solana).toBeUndefined()
   })
 
+  it('does not expose TRON WalletConnect as a payment provider without verified support', async () => {
+    wcMock.state.sessionNamespaces = {
+      tron: {
+        accounts: ['tron:0xcd8690dc:TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R'],
+      },
+    }
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: [],
+      tronChains: ['tron-nile'],
+    })
+
+    await controller.connect()
+
+    expect(controller.providers['tron-nile']).toBeUndefined()
+  })
+
   it('coalesces repeated connect calls on the same controller', async () => {
     let releaseConnect!: () => void
     wcMock.state.connectWait = new Promise((resolve) => {

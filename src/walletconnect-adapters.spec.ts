@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createEvmProviderFromUniversal,
   createSolanaProviderFromUniversal,
+  createTronProviderFromUniversal,
 } from './walletconnect-adapters'
 
 function createSerializableTransaction(): Transaction {
@@ -110,5 +111,17 @@ describe('walletconnect adapters', () => {
         code: 'wallet_provider_mismatch',
       },
     )
+  })
+
+  it('marks WalletConnect TRON as unsupported until transaction construction is verified', async () => {
+    const provider = createTronProviderFromUniversal(
+      { request: vi.fn() },
+      'tron:0xcd8690dc',
+      'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
+    )
+
+    await expect(provider.request({ method: 'tron_requestAccounts' })).rejects.toMatchObject({
+      code: 'walletconnect_tron_unsupported',
+    })
   })
 })
