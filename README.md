@@ -124,7 +124,7 @@ options in and subscribe to controller state.
 Install the optional WalletConnect runtime in applications that use this path:
 
 ```bash
-npm install @walletconnect/ethereum-provider
+npm install @walletconnect/universal-provider
 ```
 
 ```ts
@@ -139,6 +139,7 @@ const walletConnect = await createWalletConnectController({
     icons: [`${window.location.origin}/icon.png`],
   },
   chains: ['base', 'arbitrum'],
+  solanaChains: ['solana', 'solana-devnet'],
   wallets: [
     {
       id: 'metamask',
@@ -166,6 +167,13 @@ const sent = await sendOrderWalletPayment({
 unsubscribe()
 console.log(sent.txHash)
 ```
+
+EVM WalletConnect behavior remains compatible with existing EVM-only usage. Solana
+WalletConnect support depends on the connected wallet supporting
+`solana_signTransaction` for custom RPC/devnet flows or `solana_signAndSendTransaction`
+for wallet-broadcast flows. TRON WalletConnect payments are not enabled until a
+target wallet's transaction construction, signing, and broadcast contract has
+been verified; use the existing TronLink/TronWeb injected provider path for TRON.
 
 ## Return Value
 
