@@ -7,5 +7,5 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   // 大型钱包运行时保持 external，由消费者依赖解析。
-  external: ['@solana/web3.js', '@walletconnect/ethereum-provider'],
+  external: ['@solana/web3.js', '@walletconnect/universal-provider'],
 })

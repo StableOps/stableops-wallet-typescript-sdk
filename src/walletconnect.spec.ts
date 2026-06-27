@@ -88,8 +88,8 @@ const wcMock = vi.hoisted(() => {
   return { state, makeFakeProvider }
 })
 
-vi.mock('@walletconnect/ethereum-provider', () => ({
-  EthereumProvider: {
+vi.mock('@walletconnect/universal-provider', () => ({
+  default: {
     init: vi.fn(async (opts: Record<string, unknown>) => {
       wcMock.state.initCalls++
       wcMock.state.initOpts = opts

@@ -7,17 +7,17 @@ import type {
   WalletProviderByChain,
 } from './types'
 
-type WalletConnectModule = typeof import('@walletconnect/ethereum-provider')
+type WalletConnectModule = typeof import('@walletconnect/universal-provider')
 
 let walletConnectModulePromise: Promise<WalletConnectModule> | undefined
 let walletConnectControllerSequence = 0
 
 async function loadWalletConnect(): Promise<WalletConnectModule> {
   if (!walletConnectModulePromise) {
-    walletConnectModulePromise = import('@walletconnect/ethereum-provider').catch((err) => {
+    walletConnectModulePromise = import('@walletconnect/universal-provider').catch((err) => {
       walletConnectModulePromise = undefined
       const wrapped = new StableOpsWalletError(
-        'WalletConnect connections require the optional dependency @walletconnect/ethereum-provider; please install it: npm install @walletconnect/ethereum-provider',
+        'WalletConnect connections require the optional dependency @walletconnect/universal-provider; please install it: npm install @walletconnect/universal-provider',
         'walletconnect_dependency_missing',
         { cause: err },
       )
@@ -197,7 +197,7 @@ export async function createWalletConnectController(
       providerPromise = (async () => {
         const mod = await loadWalletConnect()
         try {
-          return (await mod.EthereumProvider.init({
+          return (await mod.default.init({
             projectId: input.projectId,
             metadata: input.metadata,
             chains: requiredChains as [number, ...number[]],

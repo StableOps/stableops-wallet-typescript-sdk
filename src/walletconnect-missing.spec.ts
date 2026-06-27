@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@walletconnect/ethereum-provider', () => {
-  throw new Error('Cannot find module @walletconnect/ethereum-provider')
+vi.mock('@walletconnect/universal-provider', () => {
+  throw new Error('Cannot find module @walletconnect/universal-provider')
 })
 
 describe('createWalletConnectController missing dependency', () => {
