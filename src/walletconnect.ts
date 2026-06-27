@@ -143,8 +143,8 @@ function buildRpcMap(
 
 function buildOptionalNamespaces(input: {
   evmChains: readonly EvmWalletChainId[]
-  solanaChains: readonly Array<'solana' | 'solana-devnet'>
-  tronChains: readonly Array<'tron' | 'tron-nile'>
+  solanaChains: ReadonlyArray<'solana' | 'solana-devnet'>
+  tronChains: ReadonlyArray<'tron' | 'tron-nile'>
   rpcMap: Record<number, string>
 }): WalletConnectOptionalNamespaces {
   const optionalNamespaces: WalletConnectOptionalNamespaces = {}

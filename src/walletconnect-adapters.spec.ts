@@ -5,7 +5,18 @@ import {
   createEvmProviderFromUniversal,
   createSolanaProviderFromUniversal,
   createTronProviderFromUniversal,
+  type UniversalProviderLike,
 } from './walletconnect-adapters'
+
+type UniversalProviderMock = UniversalProviderLike & {
+  request: ReturnType<typeof vi.fn>
+}
+
+function createUniversalProviderMock(response?: unknown): UniversalProviderMock {
+  return {
+    request: vi.fn(async () => response),
+  } as unknown as UniversalProviderMock
+}
 
 function createSerializableTransaction(): Transaction {
   const payer = Keypair.generate().publicKey
@@ -25,9 +36,7 @@ function createSerializableTransaction(): Transaction {
 
 describe('walletconnect adapters', () => {
   it('routes EVM requests through UniversalProvider with a CAIP-2 chain argument', async () => {
-    const universalProvider = {
-      request: vi.fn(async () => '0xTXHASH'),
-    }
+    const universalProvider = createUniversalProviderMock('0xTXHASH')
     const provider = createEvmProviderFromUniversal(universalProvider, 'eip155:8453')
 
     const result = await provider.request({
@@ -47,7 +56,7 @@ describe('walletconnect adapters', () => {
 
   it('exposes a Solana public key from the session account', async () => {
     const provider = createSolanaProviderFromUniversal(
-      { request: vi.fn() },
+      createUniversalProviderMock(),
       'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
       'So11111111111111111111111111111111111111112',
     )
@@ -63,9 +72,7 @@ describe('walletconnect adapters', () => {
     const signedBase64 = Buffer.from(
       signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
     ).toString('base64')
-    const universalProvider = {
-      request: vi.fn(async () => ({ transaction: signedBase64 })),
-    }
+    const universalProvider = createUniversalProviderMock({ transaction: signedBase64 })
     const provider = createSolanaProviderFromUniversal(
       universalProvider,
       'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
@@ -85,9 +92,7 @@ describe('walletconnect adapters', () => {
   })
 
   it('parses Solana signAndSendTransaction signature responses', async () => {
-    const universalProvider = {
-      request: vi.fn(async () => ({ signature: 'SOLANA_SIGNATURE' })),
-    }
+    const universalProvider = createUniversalProviderMock({ signature: 'SOLANA_SIGNATURE' })
     const provider = createSolanaProviderFromUniversal(
       universalProvider,
       'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
@@ -101,7 +106,7 @@ describe('walletconnect adapters', () => {
 
   it('throws a wallet mismatch error for unsupported Solana signed transaction responses', async () => {
     const provider = createSolanaProviderFromUniversal(
-      { request: vi.fn(async () => ({ unsupported: true })) },
+      createUniversalProviderMock({ unsupported: true }),
       'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
       'So11111111111111111111111111111111111111112',
     )
@@ -115,7 +120,7 @@ describe('walletconnect adapters', () => {
 
   it('marks WalletConnect TRON as unsupported until transaction construction is verified', async () => {
     const provider = createTronProviderFromUniversal(
-      { request: vi.fn() },
+      createUniversalProviderMock(),
       'tron:0xcd8690dc',
       'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
     )
