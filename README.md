@@ -114,6 +114,67 @@ sent.confirmation.catch((err) => {
 })
 ```
 
+## WalletConnect with Custom UI
+
+For mobile browsers or pages without an injected EVM provider, create a
+WalletConnect controller and render your own wallet picker and QR dialog.
+The SDK does not ship UI and does not maintain a wallet list; pass your wallet
+options in and subscribe to controller state.
+
+Install the optional WalletConnect runtime in applications that use this path:
+
+```bash
+npm install @walletconnect/universal-provider
+```
+
+```ts
+import { createWalletConnectController, sendOrderWalletPayment } from '@stableops/wallet-sdk'
+
+const walletConnect = await createWalletConnectController({
+  projectId: 'YOUR_REOWN_PROJECT_ID',
+  metadata: {
+    name: 'Your App',
+    description: 'StableOps checkout',
+    url: window.location.origin,
+    icons: [`${window.location.origin}/icon.png`],
+  },
+  chains: ['base', 'arbitrum'],
+  solanaChains: ['solana', 'solana-devnet'],
+  wallets: [
+    {
+      id: 'metamask',
+      name: 'MetaMask',
+      links: {
+        native: 'metamask://',
+        universal: 'https://metamask.app.link',
+      },
+    },
+  ],
+})
+
+const unsubscribe = walletConnect.subscribe((state) => {
+  // Render your wallet picker, QR code, loading state, or error state here.
+  // state.status === 'uri_ready' includes state.uri for QR rendering.
+})
+
+await walletConnect.connect({ walletId: 'metamask' })
+
+const sent = await sendOrderWalletPayment({
+  order,
+  providers: walletConnect.providers,
+})
+
+unsubscribe()
+console.log(sent.txHash)
+```
+
+EVM WalletConnect behavior remains compatible with existing EVM-only usage. Solana
+WalletConnect support depends on the connected wallet supporting
+`solana_signTransaction` for custom RPC/devnet flows or `solana_signAndSendTransaction`
+for wallet-broadcast flows. TRON WalletConnect payments are not enabled until a
+target wallet's transaction construction, signing, and broadcast contract has
+been verified; use the existing TronLink/TronWeb injected provider path for TRON.
+
 ## Return Value
 
 ### `SentWalletPayment`

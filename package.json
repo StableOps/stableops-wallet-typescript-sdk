@@ -1,6 +1,6 @@
 {
   "name": "@stableops/wallet-sdk",
-  "version": "0.5.1",
+"version": "0.8.0",
   "private": false,
   "description": "Browser wallet SDK for StableOps — send on-chain USDC/USDT transfers directly from user wallets.",
   "keywords": [
@@ -49,10 +49,14 @@
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "@solana/web3.js": "^1.98.0"
+    "@solana/web3.js": "^1.98.0",
+    "@walletconnect/universal-provider": "^2.23.9"
   },
   "peerDependenciesMeta": {
     "@solana/web3.js": {
+      "optional": true
+    },
+    "@walletconnect/universal-provider": {
       "optional": true
     }
   },
@@ -60,6 +64,7 @@
     "@eslint/js": "^9.16.0",
     "@solana/web3.js": "1.98.4",
     "@types/node": "^24.0.0",
+    "@walletconnect/universal-provider": "2.23.9",
     "eslint": "^9.16.0",
     "globals": "^15.14.0",
     "tsup": "^8.5.1",
