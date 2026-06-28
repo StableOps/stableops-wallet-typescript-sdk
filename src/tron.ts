@@ -19,6 +19,13 @@ const TRON_ADDRESS_POLL_INTERVAL_MS = 150
 const TRON_RECEIPT_POLL_INTERVAL_MS = 3_000
 const TRON_RECEIPT_TIMEOUT_MS = 90_000
 
+// tron_requestAccounts 响应码
+const TRON_REQUEST_ACCOUNTS_CODE = {
+  OK: 200,
+  PENDING: 4000,
+  REJECTED: 4001,
+} as const
+
 function isValidTronBase58(value: unknown): value is string {
   return typeof value === 'string' && TRON_ADDRESS_REGEX.test(value)
 }
@@ -140,6 +147,39 @@ function resolveTronDefaultAddressBase58(tronWeb: TronWebLike): string | undefin
   }
 }
 
+// 调用 tron_requestAccounts 触发 TronLink 解锁/授权弹窗，并检查返回码：
+//   200       → 已授权，继续。
+//   4001      → 用户主动拒绝，立即抛出 wallet_user_rejected。
+//   4000      → 请求排队中（钱包弹窗等待响应），由后续 resolveTronWeb 轮询兜底。
+//   老版本无结构化返回 → catch 忽略，行为与之前一致。
+async function requestTronAccounts(
+  accountRequester: (args: { method: string; params?: unknown }) => Promise<unknown>,
+): Promise<void> {
+  walletDebug('tron:requestAccounts')
+
+  let result: { code?: number; message?: string } | undefined
+  try {
+    result = (await accountRequester({ method: 'tron_requestAccounts' })) as typeof result
+  } catch (err) {
+    // 部分老版本 TronLink 调用本身会抛出，忽略后由后续流程兜底处理。
+    walletDebug('tron:requestAccounts-error', { error: String(err) })
+    return
+  }
+
+  walletDebug('tron:requestAccounts-result', result)
+
+  const code = result?.code
+  if (code === TRON_REQUEST_ACCOUNTS_CODE.REJECTED) {
+    throw new StableOpsWalletError(
+      'User rejected the TronLink authorization request',
+      'wallet_user_rejected',
+      result,
+    )
+  }
+  // code === 200（已授权）或 undefined（老版本）→ 继续；
+  // code === 4000（等待用户操作）→ 由 resolveTronWeb / resolveTronFromAddress 轮询兜底。
+}
+
 // 解析 TRON 付款方地址：调用方显式传入时直接校验返回；
 // 否则等待 TronLink 填好 defaultAddress，避免授权后短暂空窗期误报地址无效。
 async function resolveTronFromAddress(
@@ -218,8 +258,8 @@ export async function sendTronWalletPayment(
 ): Promise<SentWalletPayment> {
   const accountRequester = getTronAccountRequester(input.provider)
   if (accountRequester) {
-    walletDebug('tron:requestAccounts')
-    await accountRequester({ method: 'tron_requestAccounts' })
+    // 触发 TronLink 解锁/授权弹窗，并处理用户拒绝的情况。
+    await requestTronAccounts(accountRequester)
   }
 
   const initialTronWeb = await resolveTronWeb(input.provider)
