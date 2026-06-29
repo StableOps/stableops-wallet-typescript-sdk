@@ -10,6 +10,7 @@ import { StableOpsWalletError } from './errors'
 import {
   createEvmProviderFromUniversal,
   createSolanaProviderFromUniversal,
+  createTronProviderFromUniversal,
   type UniversalProviderLike,
 } from './walletconnect-adapters'
 import {
@@ -22,6 +23,7 @@ import type {
   ChainId,
   Eip1193Provider,
   EvmWalletChainId,
+  WalletConnectTronChainId,
   WalletProvider,
   WalletProviderByChain,
 } from './types'
@@ -259,6 +261,18 @@ export async function createWalletConnectController(
           providers[chain] = createSolanaProviderFromUniversal(
             provider,
             toWalletConnectChainId(chain),
+            account,
+          ) as WalletProvider
+        }
+      }
+    }
+    for (const chain of tronChains) {
+      if (!authorized || authorized.has(chain)) {
+        const account = getSessionAccountForChain(namespaces, chain)
+        if (account) {
+          providers[chain] = createTronProviderFromUniversal(
+            provider,
+            toWalletConnectChainId(chain) as WalletConnectTronChainId,
             account,
           ) as WalletProvider
         }

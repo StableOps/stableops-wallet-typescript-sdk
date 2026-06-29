@@ -1,7 +1,11 @@
-import type { Eip1193Provider } from './types'
+import type {
+  Eip1193Provider,
+  SolanaWalletProvider,
+  WalletConnectTronChainId,
+  WalletConnectTronProvider,
+} from './types'
 import { StableOpsWalletError } from './errors'
 import { loadSolanaWeb3 } from './lazy'
-import type { SolanaWalletProvider } from './types'
 
 export type UniversalProviderLike = {
   request<T = unknown>(
@@ -116,27 +120,54 @@ export function createSolanaProviderFromUniversal(
   }
 }
 
-export type WalletConnectUnsupportedTronProvider = {
-  walletConnectTron: true
-  chainId: 'tron:0x2b6653dc' | 'tron:0xcd8690dc'
-  account: string
-  request<T = unknown>(args: { method: string; params?: unknown }): Promise<T>
+// universal-provider 在 connect 后可能带有 sessionProperties;部分钱包用
+// tron_method_version 标记 tron_signTransaction 的 params 形状(v1 与默认不同)。
+type TronUniversalProvider = UniversalProviderLike & {
+  session?: { sessionProperties?: Record<string, unknown> }
 }
 
+// 从 tron_signTransaction 的返回里取出已签名交易:部分钱包包了一层 { result }。
+function unwrapSignedTronTransaction(response: unknown): unknown {
+  if (response && typeof response === 'object' && 'result' in response) {
+    const inner = (response as { result?: unknown }).result
+    if (inner != null) return inner
+  }
+  return response
+}
+
+// 通过 WalletConnect(universal-provider)对 TRON 交易签名。
+// 与官方库 @tronweb3/walletconnect-tron 发送的请求保持一致:
+//   method: tron_signTransaction
+//   params: v1 → { address, transaction };默认 → { address, transaction: { transaction } }
+// 仅签名,不广播——交易构造与广播由 tron.ts 用 tronweb 完成。
 export function createTronProviderFromUniversal(
-  _provider: UniversalProviderLike,
-  chainId: 'tron:0x2b6653dc' | 'tron:0xcd8690dc',
+  provider: UniversalProviderLike,
+  chainId: WalletConnectTronChainId,
   account: string,
-): WalletConnectUnsupportedTronProvider {
+): WalletConnectTronProvider {
   return {
     walletConnectTron: true,
     chainId,
     account,
-    async request() {
-      throw new StableOpsWalletError(
-        'TRON WalletConnect payments are not supported until transaction construction, signing, and broadcast are verified for a target wallet',
-        'walletconnect_tron_unsupported',
+    async signTransaction(transaction) {
+      const sessionProperties = (provider as TronUniversalProvider).session?.sessionProperties
+      const isV1 = sessionProperties?.tron_method_version === 'v1'
+      const params = isV1
+        ? { address: account, transaction }
+        : { address: account, transaction: { transaction } }
+      const response = await provider.request(
+        { method: 'tron_signTransaction', params },
+        chainId,
       )
+      const signed = unwrapSignedTronTransaction(response)
+      if (signed == null) {
+        throw new StableOpsWalletError(
+          'TRON WalletConnect wallet did not return a signed transaction',
+          'wallet_provider_mismatch',
+          response,
+        )
+      }
+      return signed
     },
   }
 }

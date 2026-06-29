@@ -17,6 +17,12 @@ export const EVM_WALLET_CHAINS = [
 
 export const TRON_WALLET_CHAINS = ['tron', 'tron-nile'] as const
 
+// WalletConnect TRON 支付时,tronweb 构造/广播交易所用的默认全节点(可被 tronRpcUrl 覆盖)。
+export const TRON_FULL_NODE_URLS: Readonly<Record<'tron' | 'tron-nile', string>> = {
+  tron: 'https://api.trongrid.io',
+  'tron-nile': 'https://nile.trongrid.io',
+}
+
 export const SOLANA_WALLET_CHAINS = ['solana', 'solana-devnet'] as const
 
 export const ERC20_TRANSFER_SELECTOR = 'a9059cbb'

@@ -118,15 +118,74 @@ describe('walletconnect adapters', () => {
     )
   })
 
-  it('marks WalletConnect TRON as unsupported until transaction construction is verified', async () => {
+  it('signs TRON transactions through UniversalProvider with the default nested params shape', async () => {
+    const universalProvider = createUniversalProviderMock({ txID: 'SIGNED_TX' })
     const provider = createTronProviderFromUniversal(
-      createUniversalProviderMock(),
+      universalProvider,
       'tron:0xcd8690dc',
       'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
     )
 
-    await expect(provider.request({ method: 'tron_requestAccounts' })).rejects.toMatchObject({
-      code: 'walletconnect_tron_unsupported',
+    const signed = await provider.signTransaction({ raw_data: { foo: 'bar' } })
+
+    expect(signed).toEqual({ txID: 'SIGNED_TX' })
+    expect(universalProvider.request).toHaveBeenCalledWith(
+      {
+        method: 'tron_signTransaction',
+        params: {
+          address: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
+          transaction: { transaction: { raw_data: { foo: 'bar' } } },
+        },
+      },
+      'tron:0xcd8690dc',
+    )
+  })
+
+  it('unwraps a { result } envelope from the TRON sign response', async () => {
+    const universalProvider = createUniversalProviderMock({ result: { txID: 'INNER' } })
+    const provider = createTronProviderFromUniversal(
+      universalProvider,
+      'tron:0x2b6653dc',
+      'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
+    )
+
+    await expect(provider.signTransaction({ raw_data: {} })).resolves.toEqual({ txID: 'INNER' })
+  })
+
+  it('uses the flat v1 params shape when the session advertises tron_method_version v1', async () => {
+    const universalProvider = {
+      request: vi.fn(async () => ({ txID: 'SIGNED_TX' })),
+      session: { sessionProperties: { tron_method_version: 'v1' } },
+    } as unknown as UniversalProviderMock
+    const provider = createTronProviderFromUniversal(
+      universalProvider,
+      'tron:0x2b6653dc',
+      'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
+    )
+
+    await provider.signTransaction({ raw_data: { foo: 'bar' } })
+
+    expect(universalProvider.request).toHaveBeenCalledWith(
+      {
+        method: 'tron_signTransaction',
+        params: {
+          address: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
+          transaction: { raw_data: { foo: 'bar' } },
+        },
+      },
+      'tron:0x2b6653dc',
+    )
+  })
+
+  it('throws a wallet mismatch error when the TRON sign response is empty', async () => {
+    const provider = createTronProviderFromUniversal(
+      createUniversalProviderMock(null),
+      'tron:0xcd8690dc',
+      'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
+    )
+
+    await expect(provider.signTransaction({ raw_data: {} })).rejects.toMatchObject({
+      code: 'wallet_provider_mismatch',
     })
   })
 })

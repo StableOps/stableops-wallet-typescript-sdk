@@ -1,9 +1,13 @@
+import { TRON_FULL_NODE_URLS } from './chains'
 import { StableOpsWalletError, walletDebug } from './errors'
 import { parseTokenAmount, buildSentPayment, delay } from './helpers'
+import { loadTronWeb } from './lazy'
 import type {
+  ChainId,
   SendWalletPaymentInput,
   SentWalletPayment,
   TronWebLike,
+  WalletConnectTronProvider,
   WalletPaymentInstruction,
   WalletProvider,
   WalletTokenContract,
@@ -251,11 +255,101 @@ async function confirmTronTransactionSuccess(tronWeb: TronWebLike, txID: string)
   }
 }
 
+function isWalletConnectTronProvider(
+  provider: WalletProvider,
+): provider is WalletConnectTronProvider {
+  return (provider as { walletConnectTron?: unknown }).walletConnectTron === true
+}
+
+function resolveTronFullHost(chain: ChainId, override: string | undefined): string {
+  if (override) return override
+  const url = TRON_FULL_NODE_URLS[chain as 'tron' | 'tron-nile']
+  if (!url) {
+    throw new StableOpsWalletError(
+      'No default TRON full node configured for this chain; pass tronRpcUrl',
+      'unsupported_chain',
+      { chain },
+    )
+  }
+  return url
+}
+
+// WalletConnect 路径:钱包只签名(tron_signTransaction),交易构造与广播由 SDK 用 tronweb 完成。
+// fromAddress 缺省取已连接的 WC 账户;feeLimit 与注入式路径保持一致(100 TRX)。
+async function sendTronViaWalletConnect(
+  input: SendWalletPaymentInput,
+  instruction: WalletPaymentInstruction,
+  token: WalletTokenContract,
+  provider: WalletConnectTronProvider,
+): Promise<SentWalletPayment> {
+  const fromAddress = normalizeTronAddress(input.fromAddress ?? provider.account)
+  const toAddress = normalizeTronAddress(instruction.address)
+  const amountUnits = parseTokenAmount(input.amount, token.decimals)
+  const fullHost = resolveTronFullHost(instruction.chain, input.tronRpcUrl)
+  const tronWeb = await loadTronWeb(fullHost)
+  walletDebug('tron:wc:build', {
+    contract: token.address,
+    amountUnits: amountUnits.toString(),
+    fullHost,
+  })
+  const built = await tronWeb.transactionBuilder.triggerSmartContract(
+    token.address,
+    'transfer(address,uint256)',
+    { feeLimit: 100_000_000 },
+    [
+      { type: 'address', value: toAddress },
+      { type: 'uint256', value: amountUnits.toString() },
+    ],
+    fromAddress,
+  )
+  if (!built.transaction) {
+    throw new StableOpsWalletError(
+      'TRON wallet failed to create TRC-20 transfer transaction',
+      'tron_transaction_build_failed',
+      built,
+    )
+  }
+
+  walletDebug('tron:wc:sign')
+  const signed = await provider.signTransaction(built.transaction)
+  walletDebug('tron:wc:broadcast')
+  const sent = await tronWeb.trx.sendRawTransaction(signed)
+  // 广播被节点即时拒绝(签名无效 / 余额不足等)result=false:抛出,避免静默丢单。
+  if (sent.result === false) {
+    throw new StableOpsWalletError(
+      'TRON network rejected the broadcast of the TRC-20 transfer',
+      'tron_broadcast_failed',
+      sent,
+    )
+  }
+  const txHash = sent.txid ?? sent.transaction?.txID ?? getTronSignedTransactionId(signed)
+  if (!txHash) {
+    throw new StableOpsWalletError(
+      'TRON wallet did not return a transaction hash',
+      'wallet_transaction_hash_not_found',
+      sent,
+    )
+  }
+
+  const confirmation = confirmTronTransactionSuccess(tronWeb, txHash)
+  confirmation.catch(() => {})
+
+  return {
+    ...buildSentPayment(txHash, instruction, token, fromAddress, input.amount, amountUnits),
+    confirmation,
+  }
+}
+
 export async function sendTronWalletPayment(
   input: SendWalletPaymentInput,
   instruction: WalletPaymentInstruction,
   token: WalletTokenContract,
 ): Promise<SentWalletPayment> {
+  // WalletConnect 与注入式 TronLink 两套路径并存:按 provider 形状分发。
+  if (isWalletConnectTronProvider(input.provider)) {
+    return sendTronViaWalletConnect(input, instruction, token, input.provider)
+  }
+
   const accountRequester = getTronAccountRequester(input.provider)
   if (accountRequester) {
     // 触发 TronLink 解锁/授权弹窗，并处理用户拒绝的情况。

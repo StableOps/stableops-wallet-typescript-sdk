@@ -47,6 +47,18 @@ export type TronWalletProvider =
       request?<T = unknown>(args: { method: string; params?: unknown }): Promise<T>
     }
 
+// WalletConnect 上的 CAIP-2 TRON chainId(主网 / Nile 测试网)。
+export type WalletConnectTronChainId = 'tron:0x2b6653dc' | 'tron:0xcd8690dc'
+
+// 通过 WalletConnect(universal-provider)连接的 TRON 账户。
+// 钱包只负责签名(tron_signTransaction),交易构造与广播由 SDK 用 tronweb 完成。
+export type WalletConnectTronProvider = {
+  walletConnectTron: true
+  chainId: WalletConnectTronChainId
+  account: string
+  signTransaction(transaction: unknown): Promise<unknown>
+}
+
 export type SolanaWalletProvider = {
   publicKey?: SolanaPublicKeyLike | string | null
   connect?(): Promise<{
@@ -56,7 +68,11 @@ export type SolanaWalletProvider = {
   signTransaction?(transaction: import('@solana/web3.js').Transaction): Promise<import('@solana/web3.js').Transaction>
 }
 
-export type WalletProvider = Eip1193Provider | TronWalletProvider | SolanaWalletProvider
+export type WalletProvider =
+  | Eip1193Provider
+  | TronWalletProvider
+  | WalletConnectTronProvider
+  | SolanaWalletProvider
 
 export type TronWebLike = {
   defaultAddress?: { base58?: string | false; hex?: string | false }
@@ -117,6 +133,9 @@ export type SendWalletPaymentInput = {
   amount: string
   fromAddress?: string
   chainConfigs?: Partial<Record<EvmWalletChainId, EvmWalletChainConfig>>
+  // 仅 WalletConnect TRON 支付需要:用于 tronweb 构造未签名交易并广播签名结果的全节点。
+  // 缺省按链选用 trongrid 公共节点(主网 / Nile)。
+  tronRpcUrl?: string
   solanaRpcUrl?: string
   solanaConnection?: Pick<Connection, 'getLatestBlockhash' | 'sendRawTransaction'>
 }

@@ -27,7 +27,7 @@ flow details, see the official documentation:
 
 - Browser-first helper for StableOps payment instructions.
 - EVM wallet support via EIP-1193 providers.
-- TRON wallet support via TronLink / TronWeb providers.
+- TRON wallet support via TronLink / TronWeb providers, or via WalletConnect (`tronweb` required).
 - Solana wallet support via wallet adapters.
 - Automatic candidate selection from available injected wallets.
 - Chain-specific token transfer helpers for ERC-20, TRC-20, and SPL tokens.
@@ -125,6 +125,8 @@ Install the optional WalletConnect runtime in applications that use this path:
 
 ```bash
 npm install @walletconnect/universal-provider
+# TRON WalletConnect payments additionally need tronweb to build and broadcast transactions:
+npm install tronweb
 ```
 
 ```ts
@@ -140,6 +142,7 @@ const walletConnect = await createWalletConnectController({
   },
   chains: ['base', 'arbitrum'],
   solanaChains: ['solana', 'solana-devnet'],
+  tronChains: ['tron', 'tron-nile'],
   wallets: [
     {
       id: 'metamask',
@@ -171,9 +174,13 @@ console.log(sent.txHash)
 EVM WalletConnect behavior remains compatible with existing EVM-only usage. Solana
 WalletConnect support depends on the connected wallet supporting
 `solana_signTransaction` for custom RPC/devnet flows or `solana_signAndSendTransaction`
-for wallet-broadcast flows. TRON WalletConnect payments are not enabled until a
-target wallet's transaction construction, signing, and broadcast contract has
-been verified; use the existing TronLink/TronWeb injected provider path for TRON.
+for wallet-broadcast flows. TRON WalletConnect support requires the optional
+`tronweb` dependency: the SDK builds the unsigned TRC-20 `transfer`, asks the wallet
+to sign it via `tron_signTransaction`, and broadcasts the signed transaction itself.
+Transactions are built/broadcast against a TRON full node — trongrid mainnet / Nile
+by default, overridable per call with `sendWalletPayment({ ..., tronRpcUrl })`. The
+existing TronLink/TronWeb injected provider path continues to work unchanged; the
+two paths coexist and are selected automatically by provider type.
 
 ## Return Value
 

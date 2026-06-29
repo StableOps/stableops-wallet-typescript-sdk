@@ -353,7 +353,7 @@ describe('createWalletConnectController', () => {
     expect(controller.providers.solana).toBeUndefined()
   })
 
-  it('does not expose TRON WalletConnect as a payment provider without verified support', async () => {
+  it('exposes TRON WalletConnect providers for authorized session accounts', async () => {
     wcMock.state.sessionNamespaces = {
       tron: {
         accounts: ['tron:0xcd8690dc:TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R'],
@@ -368,7 +368,12 @@ describe('createWalletConnectController', () => {
 
     await controller.connect()
 
-    expect(controller.providers['tron-nile']).toBeUndefined()
+    expect(controller.providers['tron-nile']).toMatchObject({
+      walletConnectTron: true,
+      chainId: 'tron:0xcd8690dc',
+      account: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R',
+    })
+    expect(controller.providers.tron).toBeUndefined()
   })
 
   it('keeps all WalletConnect session accounts in connected state and clears requested providers', async () => {
