@@ -124,11 +124,14 @@ export const WALLET_TOKEN_CONTRACTS: readonly WalletTokenContract[] = [
   {
     chain: 'bsc-testnet',
     asset: 'USDT',
-    address: '0x66e972502a34a625828c544a1914e8d8cc2a9de5',
+    address: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
     decimals: 18,
   },
 ]
 
-export function findWalletTokenContract(chain: ChainId, asset: Asset): WalletTokenContract | undefined {
+export function findWalletTokenContract(
+  chain: ChainId,
+  asset: Asset,
+): WalletTokenContract | undefined {
   return WALLET_TOKEN_CONTRACTS.find((entry) => entry.chain === chain && entry.asset === asset)
 }
