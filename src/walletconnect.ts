@@ -6,7 +6,7 @@ import {
   WALLETCONNECT_SOLANA_METHODS,
   WALLETCONNECT_TRON_METHODS,
 } from './chains'
-import { StableOpsWalletError } from './errors'
+import { StableOpsWalletError, walletDebug } from './errors'
 import {
   createEvmProviderFromUniversal,
   createSolanaProviderFromUniversal,
@@ -19,6 +19,10 @@ import {
   toWalletConnectChainId,
   type WalletConnectSessionNamespaces,
 } from './walletconnect-caip'
+import {
+  cleanupStaleWalletConnectStorage,
+  WALLETCONNECT_STORAGE_PREFIX_MARKER,
+} from './walletconnect-storage'
 import type {
   ChainId,
   Eip1193Provider,
@@ -102,6 +106,9 @@ export type WalletConnectController = {
   disconnect(): Promise<void>
 }
 
+// 钱包侧结束会话的事件(远端断开 / 会话过期),两者的处理一致。
+type WalletConnectSessionEndEvent = 'session_delete' | 'session_expire'
+
 type WalletConnectProviderLike = UniversalProviderLike & {
   connect(input: { optionalNamespaces: WalletConnectOptionalNamespaces }): Promise<unknown>
   disconnect(): Promise<void>
@@ -109,7 +116,9 @@ type WalletConnectProviderLike = UniversalProviderLike & {
     namespaces?: WalletConnectSessionNamespaces
   }
   on(event: 'display_uri', cb: (uri: string) => void): unknown
-  removeListener?: (event: 'display_uri', cb: (uri: string) => void) => unknown
+  on(event: WalletConnectSessionEndEvent, cb: () => void): unknown
+  removeListener?(event: 'display_uri', cb: (uri: string) => void): unknown
+  removeListener?(event: WalletConnectSessionEndEvent, cb: () => void): unknown
 }
 
 type WalletConnectOptionalNamespace = {
@@ -218,7 +227,11 @@ export async function createWalletConnectController(
     tronChains,
     rpcMap,
   })
-  const storagePrefix = `stableops-walletconnect-${Date.now()}-${++walletConnectControllerSequence}`
+  // 每个 controller 使用独立存储前缀：刻意不复用旧会话（陈旧 pairing 会造成
+  // "No matching key" 噪音甚至连接失败），代价是刷新页面后需要重新扫码配对。
+  // 旧前缀遗留的存储条目在下面 best-effort 清理，防止无限累积。
+  const storagePrefix = `${WALLETCONNECT_STORAGE_PREFIX_MARKER}${Date.now()}-${++walletConnectControllerSequence}`
+  void cleanupStaleWalletConnectStorage(storagePrefix).catch(() => {})
   const providers: WalletProviderByChain = {}
   const listeners = new Set<(state: WalletConnectControllerState) => void>()
   let state: WalletConnectControllerState = { status: 'idle', wallets }
@@ -227,6 +240,11 @@ export async function createWalletConnectController(
   // 单飞 connect：同一个 controller 上并发 / 重复点击只跑一次 connect，避免在 WC SDK
   // 内部产生重复的 proposal/session 导致 "No matching key" 噪音日志。
   let connectInflight: Promise<string[]> | undefined
+  // 会话代际：disconnect / 钱包侧结束会话时 +1。挂起中的 connect 完成后发现代际
+  // 已变化就不再写入状态，避免把 disconnected 覆盖成 connected / failed。
+  let sessionEpoch = 0
+  let sessionEndedListener: (() => void) | undefined
+  let sessionListenerTarget: WalletConnectProviderLike | undefined
 
   function setState(next: WalletConnectControllerState): void {
     state = next
@@ -304,6 +322,32 @@ export async function createWalletConnectController(
     provider.on('display_uri', displayUriListener)
   }
 
+  // 监听钱包侧结束会话(session_delete / session_expire):清空 providers 并广播
+  // disconnected,避免 controller 停留在 connected、后续支付得到晦涩的 WC 内部错误。
+  function attachSessionLifecycleListeners(provider: WalletConnectProviderLike): void {
+    if (sessionListenerTarget === provider) return
+    detachSessionLifecycleListeners()
+    const listener = () => {
+      walletDebug('walletconnect:session-ended')
+      sessionEpoch++
+      clearProviders()
+      if (state.status === 'connected') setState({ status: 'disconnected', wallets })
+    }
+    provider.on('session_delete', listener)
+    provider.on('session_expire', listener)
+    sessionEndedListener = listener
+    sessionListenerTarget = provider
+  }
+
+  function detachSessionLifecycleListeners(): void {
+    if (sessionListenerTarget && sessionEndedListener) {
+      sessionListenerTarget.removeListener?.('session_delete', sessionEndedListener)
+      sessionListenerTarget.removeListener?.('session_expire', sessionEndedListener)
+    }
+    sessionEndedListener = undefined
+    sessionListenerTarget = undefined
+  }
+
   function getProvider(): Promise<WalletConnectProviderLike> {
     if (!providerPromise) {
       providerPromise = (async () => {
@@ -362,6 +406,7 @@ export async function createWalletConnectController(
       if (connectInflight) return connectInflight
       const selectedWallet = getSelectedWallet(connectInput?.walletId)
       setState({ status: 'connecting', wallets, selectedWallet })
+      const epoch = sessionEpoch
       connectInflight = (async () => {
         let provider: WalletConnectProviderLike
         try {
@@ -375,15 +420,19 @@ export async function createWalletConnectController(
                   'walletconnect_init_failed',
                   err,
                 )
-          setState({ status: 'failed', wallets, error })
+          if (sessionEpoch === epoch) setState({ status: 'failed', wallets, error })
           throw error
         }
         attachDisplayUriListener(provider, selectedWallet)
+        attachSessionLifecycleListeners(provider)
         try {
           await provider.connect({ optionalNamespaces })
+          const accounts = getSessionAccounts(provider)
+          // connect 挂起期间调用了 disconnect：不再回填 providers / 覆盖状态，
+          // 本地状态保持 disconnected（会话本身已由 disconnect 负责关闭）。
+          if (sessionEpoch !== epoch) return accounts
           assertHasAuthorizedChain(provider)
           fillAuthorizedProviders(provider)
-          const accounts = getSessionAccounts(provider)
           setState({ status: 'connected', wallets, accounts })
           return accounts
         } catch (err) {
@@ -395,7 +444,7 @@ export async function createWalletConnectController(
                   'walletconnect_connect_failed',
                   err,
                 )
-          setState({ status: 'failed', wallets, error })
+          if (sessionEpoch === epoch) setState({ status: 'failed', wallets, error })
           throw error
         }
       })()
@@ -406,24 +455,27 @@ export async function createWalletConnectController(
       }
     },
     async disconnect() {
-      if (!providerPromise) {
-        clearProviders()
-        setState({ status: 'disconnected', wallets })
-        return
-      }
-      try {
-        const provider = await providerPromise
-        if (displayUriListener) {
-          provider.removeListener?.('display_uri', displayUriListener)
-          displayUriListener = undefined
+      // 视为幂等操作：先让代际失效（阻止挂起中的 connect 事后覆盖状态），
+      // 内部清理出错只记 debug，不影响本地状态复位，也不向调用方抛出。
+      sessionEpoch++
+      const pending = providerPromise
+      providerPromise = undefined
+      connectInflight = undefined
+      if (pending) {
+        try {
+          const provider = await pending
+          if (displayUriListener) {
+            provider.removeListener?.('display_uri', displayUriListener)
+            displayUriListener = undefined
+          }
+          detachSessionLifecycleListeners()
+          await provider.disconnect()
+        } catch (err) {
+          walletDebug('walletconnect:disconnect-error', { error: String(err) })
         }
-        await provider.disconnect()
-      } finally {
-        providerPromise = undefined
-        connectInflight = undefined
-        clearProviders()
-        setState({ status: 'disconnected', wallets })
       }
+      clearProviders()
+      setState({ status: 'disconnected', wallets })
     },
   }
 }

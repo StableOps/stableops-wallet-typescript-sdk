@@ -57,16 +57,35 @@ function getStringField(response: unknown, field: string): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
-function parseSignedTransactionBase64(response: unknown): string {
+// Solana / Bitcoin 系 base58 字典(无 0 O I l)。仅用于解码钱包返回的 base58 签名,
+// 避免为此引入 bs58 依赖。非法字符返回 undefined 交由调用方按响应不兼容处理。
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+function base58ToBytes(value: string): Uint8Array | undefined {
+  const bytes: number[] = []
+  for (const char of value) {
+    let carry = BASE58_ALPHABET.indexOf(char)
+    if (carry < 0) return undefined
+    for (let index = 0; index < bytes.length; index++) {
+      carry += bytes[index]! * 58
+      bytes[index] = carry & 0xff
+      carry >>= 8
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff)
+      carry >>= 8
+    }
+  }
+  for (const char of value) {
+    if (char !== '1') break
+    bytes.push(0)
+  }
+  return Uint8Array.from(bytes.reverse())
+}
+
+function parseSignedTransactionBase64(response: unknown): string | undefined {
   if (typeof response === 'string') return response
-  const transaction =
-    getStringField(response, 'transaction') ?? getStringField(response, 'signedTransaction')
-  if (transaction) return transaction
-  throw new StableOpsWalletError(
-    'Solana wallet did not return a signed transaction',
-    'wallet_provider_mismatch',
-    response,
-  )
+  return getStringField(response, 'transaction') ?? getStringField(response, 'signedTransaction')
 }
 
 function parseSignature(response: unknown): string {
@@ -102,7 +121,24 @@ export function createSolanaProviderFromUniversal(
         },
         chainId,
       )
-      return web3.Transaction.from(base64ToBytes(parseSignedTransactionBase64(response)))
+      const signedBase64 = parseSignedTransactionBase64(response)
+      if (signedBase64) return web3.Transaction.from(base64ToBytes(signedBase64))
+      // 旧版 WalletConnect Solana 规范只返回 { signature }(base58,签名者即会话账户):
+      // 把签名挂回原交易,等价于钱包返回完整签名交易。
+      const signature = getStringField(response, 'signature')
+      const signatureBytes = signature ? base58ToBytes(signature) : undefined
+      if (signatureBytes && signatureBytes.length === 64) {
+        transaction.addSignature(
+          new web3.PublicKey(account),
+          signatureBytes as unknown as Buffer,
+        )
+        return transaction
+      }
+      throw new StableOpsWalletError(
+        'Solana wallet did not return a signed transaction',
+        'wallet_provider_mismatch',
+        response,
+      )
     },
     async signAndSendTransaction(transaction) {
       const serialized = bytesToBase64(

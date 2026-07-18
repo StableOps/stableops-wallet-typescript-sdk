@@ -322,6 +322,39 @@ describe('sendWalletPayment', () => {
     expect(result.txHash).toBe('TRON_TX_HASH')
   })
 
+  it('TRON 节点拒绝广播（{ code, message } 无 result 字段）时抛 tron_broadcast_failed 而非误报成功', async () => {
+    const tronWeb = {
+      defaultAddress: { base58: 'TQjcL8mfCfAqLQzXWw5nP9jJmkJ3uH5r6R' },
+      transactionBuilder: {
+        triggerSmartContract: async () => ({ transaction: { raw_data: {} } }),
+      },
+      trx: {
+        // 签名交易自带 txID：修复前会被兜底当成 txHash 误报支付成功。
+        sign: async (transaction: unknown) => ({ transaction, txID: 'SIGNED_TX_ID' }),
+        sendRawTransaction: async () => ({
+          code: 'CONTRACT_VALIDATE_ERROR',
+          txid: 'REJECTED_TX_ID',
+          message: Buffer.from('Contract validate error : account does not exist').toString('hex'),
+        }),
+      },
+    }
+
+    await expect(
+      sendWalletPayment({
+        provider: { tronWeb },
+        amount: '1',
+        instruction: {
+          chain: 'tron',
+          asset: 'USDT',
+          address: 'TQjKJZmBEXMhmnpfjfJ6bJrY3w6KNpqrCN',
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'tron_broadcast_failed',
+      details: { message: 'Contract validate error : account does not exist' },
+    })
+  })
+
   it('TronLink 授权后 defaultAddress 延迟就绪时轮询等待而非误报地址无效', async () => {
     // 复刻 TronLink 真机行为：tron_requestAccounts 返回时 base58 仍为 false，稍后才写好。
     const tronWeb = {

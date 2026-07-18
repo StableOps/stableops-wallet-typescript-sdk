@@ -134,6 +134,34 @@ function getTronSignedTransactionId(signed: unknown): string | undefined {
   return (signed as { txID?: string }).txID
 }
 
+type TronBroadcastResponse = Awaited<ReturnType<TronWebLike['trx']['sendRawTransaction']>>
+
+// 广播失败响应里的 message 是 hex 编码的可读文案，解码后放进错误详情便于排障。
+function decodeTronHexMessage(message: string | undefined): string | undefined {
+  if (!message || message.length % 2 !== 0 || !/^[0-9a-fA-F]+$/u.test(message)) return message
+  let decoded = ''
+  for (let index = 0; index < message.length; index += 2) {
+    decoded += String.fromCharCode(Number.parseInt(message.slice(index, index + 2), 16))
+  }
+  return decoded
+}
+
+// 校验广播是否被节点接受。java-tron 失败时返回 { code, message }，且 protobuf JSON
+// 序列化会省略 result:false 字段，所以仅凭 result === false 判断会漏掉最常见的失败形态；
+// 成功为 { result: true, txid }。老版本注入钱包可能只返回 { txid }（无 result/code），
+// 保持宽容视为成功。签名交易自带 txID，失败时若不在这里抛出，兜底取号会误报支付成功。
+function assertTronBroadcastAccepted(sent: TronBroadcastResponse): void {
+  const rejected =
+    sent.result === false ||
+    (typeof sent.code === 'string' && sent.code !== 'SUCCESS' && sent.result !== true)
+  if (!rejected) return
+  throw new StableOpsWalletError(
+    'TRON network rejected the broadcast of the TRC-20 transfer',
+    'tron_broadcast_failed',
+    { response: sent, message: decodeTronHexMessage(sent.message) },
+  )
+}
+
 function resolveTronDefaultAddressBase58(tronWeb: TronWebLike): string | undefined {
   const base58 = tronWeb.defaultAddress?.base58
   if (isValidTronBase58(base58)) return base58
@@ -314,14 +342,8 @@ async function sendTronViaWalletConnect(
   const signed = await provider.signTransaction(built.transaction)
   walletDebug('tron:wc:broadcast')
   const sent = await tronWeb.trx.sendRawTransaction(signed)
-  // 广播被节点即时拒绝(签名无效 / 余额不足等)result=false:抛出,避免静默丢单。
-  if (sent.result === false) {
-    throw new StableOpsWalletError(
-      'TRON network rejected the broadcast of the TRC-20 transfer',
-      'tron_broadcast_failed',
-      sent,
-    )
-  }
+  // 广播被节点即时拒绝(签名无效 / 余额不足等):抛出,避免静默丢单。
+  assertTronBroadcastAccepted(sent)
   const txHash = sent.txid ?? sent.transaction?.txID ?? getTronSignedTransactionId(signed)
   if (!txHash) {
     throw new StableOpsWalletError(
@@ -392,6 +414,8 @@ export async function sendTronWalletPayment(
   const signed = await tronWeb.trx.sign(built.transaction)
   walletDebug('tron:broadcast')
   const sent = await tronWeb.trx.sendRawTransaction(signed)
+  // 广播被节点即时拒绝(签名无效 / 合约校验失败等):抛出,避免兜底取签名交易的 txID 误报成功。
+  assertTronBroadcastAccepted(sent)
   const txHash = sent.txid ?? sent.transaction?.txID ?? getTronSignedTransactionId(signed)
   if (!txHash) {
     throw new StableOpsWalletError(

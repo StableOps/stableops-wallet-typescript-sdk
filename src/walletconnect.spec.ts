@@ -453,6 +453,63 @@ describe('createWalletConnectController', () => {
     expect(states).toContainEqual({ status: 'disconnected', wallets: [] })
   })
 
+  it('钱包侧 session_delete 后进入 disconnected 并清空 providers', async () => {
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: ['base'],
+    })
+
+    await controller.connect()
+    expect(controller.providers.base).toBeDefined()
+
+    wcMock.state.fakeProvider?.emit('session_delete')
+
+    expect(controller.getState()).toMatchObject({ status: 'disconnected' })
+    expect(controller.providers.base).toBeUndefined()
+  })
+
+  it('disconnect 幂等：provider.disconnect 抛错时仍复位状态且不向外抛', async () => {
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: ['base'],
+    })
+    await controller.connect()
+    const provider = wcMock.state.fakeProvider!
+    provider.disconnect = async () => {
+      throw new Error('No active session')
+    }
+
+    await expect(controller.disconnect()).resolves.toBeUndefined()
+    expect(controller.getState()).toMatchObject({ status: 'disconnected' })
+    expect(controller.providers.base).toBeUndefined()
+  })
+
+  it('connect 挂起期间 disconnect：最终状态保持 disconnected 而非 failed', async () => {
+    let rejectConnect!: (err: Error) => void
+    wcMock.state.connectWait = new Promise((_resolve, reject) => {
+      rejectConnect = reject
+    })
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: ['base'],
+    })
+
+    const pending = controller.connect()
+    pending.catch(() => {})
+    await vi.waitFor(() => expect(wcMock.state.fakeProvider).toBeDefined())
+
+    await controller.disconnect()
+    expect(controller.getState()).toMatchObject({ status: 'disconnected' })
+
+    rejectConnect(new Error('Proposal expired'))
+    await expect(pending).rejects.toMatchObject({ code: 'walletconnect_connect_failed' })
+    // 挂起中的 connect 失败不得把 disconnected 覆盖成 failed。
+    expect(controller.getState()).toMatchObject({ status: 'disconnected' })
+  })
+
   it('wraps connect errors and preserves the original cause', async () => {
     const userRejected = Object.assign(new Error('User rejected'), { code: 4001 })
     wcMock.state.enableError = userRejected

@@ -124,7 +124,7 @@ export const WALLET_TOKEN_CONTRACTS: readonly WalletTokenContract[] = [
   {
     chain: 'bsc-testnet',
     asset: 'USDT',
-    address: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
+    address: '0x337610d27c682e347c9cd60bd4b3b107c9d34ddd',
     decimals: 18,
   },
 ]

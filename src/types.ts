@@ -97,6 +97,9 @@ export type TronWebLike = {
       txid?: string
       transaction?: { txID?: string }
       result?: boolean
+      // java-tron 广播被拒绝时返回 { code, message }(protobuf JSON 序列化会省略 result:false)。
+      code?: string
+      message?: string
     }>
     getTransactionInfo?(txID: string): Promise<{
       id?: string

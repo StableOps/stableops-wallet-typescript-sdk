@@ -34,6 +34,33 @@ function createSerializableTransaction(): Transaction {
   return transaction
 }
 
+// 测试侧 base58 编码（Solana 字典），用于构造旧规范钱包返回的 { signature } 响应。
+function bytesToBase58(bytes: Uint8Array): string {
+  const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+  const digits = [0]
+  for (const byte of bytes) {
+    let carry = byte
+    for (let index = 0; index < digits.length; index++) {
+      carry += digits[index]! << 8
+      digits[index] = carry % 58
+      carry = (carry / 58) | 0
+    }
+    while (carry > 0) {
+      digits.push(carry % 58)
+      carry = (carry / 58) | 0
+    }
+  }
+  let encoded = ''
+  for (const byte of bytes) {
+    if (byte !== 0) break
+    encoded += '1'
+  }
+  for (let index = digits.length - 1; index >= 0; index--) {
+    encoded += alphabet[digits[index]!]
+  }
+  return encoded
+}
+
 describe('walletconnect adapters', () => {
   it('routes EVM requests through UniversalProvider with a CAIP-2 chain argument', async () => {
     const universalProvider = createUniversalProviderMock('0xTXHASH')
@@ -102,6 +129,42 @@ describe('walletconnect adapters', () => {
     await expect(provider.signAndSendTransaction?.(createSerializableTransaction())).resolves.toBe(
       'SOLANA_SIGNATURE',
     )
+  })
+
+  it('兼容旧规范只返回 { signature }（base58）的钱包：把签名挂回原交易', async () => {
+    const payer = Keypair.generate()
+    const buildTransaction = () => {
+      const transaction = new Transaction({
+        feePayer: payer.publicKey,
+        recentBlockhash: '11111111111111111111111111111111',
+      })
+      transaction.add(
+        SystemProgram.transfer({
+          fromPubkey: payer.publicKey,
+          toPubkey: payer.publicKey,
+          lamports: 0,
+        }),
+      )
+      return transaction
+    }
+    // 钱包对同一份消息真实签名后只返回 base58 签名。
+    const signedByWallet = buildTransaction()
+    signedByWallet.sign(payer)
+    const universalProvider = createUniversalProviderMock({
+      signature: bytesToBase58(signedByWallet.signature!),
+    })
+    const provider = createSolanaProviderFromUniversal(
+      universalProvider,
+      'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+      payer.publicKey.toBase58(),
+    )
+
+    const result = await provider.signTransaction?.(buildTransaction())
+
+    expect(result).toBeInstanceOf(Transaction)
+    expect(result!.signatures[0]?.publicKey.equals(payer.publicKey)).toBe(true)
+    // 附回的签名能通过完整序列化校验（verifySignatures 默认开启）。
+    expect(() => result!.serialize()).not.toThrow()
   })
 
   it('throws a wallet mismatch error for unsupported Solana signed transaction responses', async () => {
