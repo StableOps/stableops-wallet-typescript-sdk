@@ -412,6 +412,64 @@ describe('createWalletConnectController', () => {
     expect(controller.providers['solana-devnet']).toBeUndefined()
   })
 
+  it('账户变化后刷新连接状态和 Solana provider', async () => {
+    const chainId = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
+    wcMock.state.sessionNamespaces = {
+      solana: {
+        accounts: [`${chainId}:So11111111111111111111111111111111111111112`],
+      },
+    }
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: [],
+      solanaChains: ['solana-devnet'],
+    })
+    await controller.connect()
+
+    wcMock.state.fakeProvider?.emit('session_event', {
+      params: {
+        chainId,
+        event: { name: 'accountsChanged', data: ['11111111111111111111111111111112'] },
+      },
+    })
+
+    expect(controller.getState()).toMatchObject({
+      status: 'connected',
+      accounts: [`${chainId}:11111111111111111111111111111112`],
+    })
+    expect(controller.providers['solana-devnet']).toMatchObject({
+      publicKey: '11111111111111111111111111111112',
+    })
+  })
+
+  it('session_update 后按最新命名空间刷新账户和授权 provider', async () => {
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: ['base', 'ethereum-sepolia'],
+    })
+    await controller.connect()
+    const provider = wcMock.state.fakeProvider!
+    provider.session = {
+      namespaces: {
+        eip155: {
+          chains: ['eip155:11155111'],
+          accounts: ['eip155:11155111:0x2222222222222222222222222222222222222222'],
+        },
+      },
+    }
+
+    provider.emit('session_update', { params: { namespaces: provider.session.namespaces } })
+
+    expect(controller.providers.base).toBeUndefined()
+    expect(controller.providers['ethereum-sepolia']).toBeDefined()
+    expect(controller.getState()).toMatchObject({
+      status: 'connected',
+      accounts: ['eip155:11155111:0x2222222222222222222222222222222222222222'],
+    })
+  })
+
   it('coalesces repeated connect calls on the same controller', async () => {
     let releaseConnect!: () => void
     wcMock.state.connectWait = new Promise((resolve) => {

@@ -15,6 +15,7 @@ import {
   type Eip1193Provider,
   type SolanaWalletProvider,
 } from './index'
+import { resolveSolanaConnectionSettings } from './solana'
 
 class MockEvmProvider implements Eip1193Provider {
   readonly calls: { method: string; params?: unknown[] | Record<string, unknown> }[] = []
@@ -528,6 +529,17 @@ describe('sendWalletPayment', () => {
     expect(provider.signedTransaction?.instructions[1]?.programId.toBase58()).toBe(
       'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
     )
+  })
+
+  it('Solana 开发网未显式传 RPC 时自动选择开发网节点并本地广播', () => {
+    expect(resolveSolanaConnectionSettings('solana-devnet')).toEqual({
+      rpcUrl: 'https://api.devnet.solana.com',
+      preferLocalSend: true,
+    })
+    expect(resolveSolanaConnectionSettings('solana')).toEqual({
+      rpcUrl: 'https://api.mainnet-beta.solana.com',
+      preferLocalSend: false,
+    })
   })
 
   it('Solana 交易状态带 err（链上失败）时 confirmation 抛错而非误报成功', async () => {

@@ -108,6 +108,11 @@ export type WalletConnectController = {
 
 // 钱包侧结束会话的事件(远端断开 / 会话过期),两者的处理一致。
 type WalletConnectSessionEndEvent = 'session_delete' | 'session_expire'
+type WalletConnectSessionChangeEvent =
+  | 'accountsChanged'
+  | 'chainChanged'
+  | 'session_update'
+  | 'session_event'
 
 type WalletConnectProviderLike = UniversalProviderLike & {
   connect(input: { optionalNamespaces: WalletConnectOptionalNamespaces }): Promise<unknown>
@@ -117,8 +122,10 @@ type WalletConnectProviderLike = UniversalProviderLike & {
   }
   on(event: 'display_uri', cb: (uri: string) => void): unknown
   on(event: WalletConnectSessionEndEvent, cb: () => void): unknown
+  on(event: WalletConnectSessionChangeEvent, cb: (payload: unknown) => void): unknown
   removeListener?(event: 'display_uri', cb: (uri: string) => void): unknown
   removeListener?(event: WalletConnectSessionEndEvent, cb: () => void): unknown
+  removeListener?(event: WalletConnectSessionChangeEvent, cb: (payload: unknown) => void): unknown
 }
 
 type WalletConnectOptionalNamespace = {
@@ -244,6 +251,8 @@ export async function createWalletConnectController(
   // 已变化就不再写入状态，避免把 disconnected 覆盖成 connected / failed。
   let sessionEpoch = 0
   let sessionEndedListener: (() => void) | undefined
+  let sessionChangedListener: ((payload: unknown) => void) | undefined
+  let sessionEventListener: ((payload: unknown) => void) | undefined
   let sessionListenerTarget: WalletConnectProviderLike | undefined
 
   function setState(next: WalletConnectControllerState): void {
@@ -311,6 +320,39 @@ export async function createWalletConnectController(
     }
   }
 
+  function refreshConnectedSession(provider: WalletConnectProviderLike): void {
+    if (state.status !== 'connected') return
+    fillAuthorizedProviders(provider)
+    setState({ status: 'connected', wallets, accounts: getSessionAccounts(provider) })
+  }
+
+  function applyAccountsChangedEvent(provider: WalletConnectProviderLike, payload: unknown): void {
+    if (!payload || typeof payload !== 'object') return
+    const params = (payload as { params?: unknown }).params
+    if (!params || typeof params !== 'object') return
+    const chainId = (params as { chainId?: unknown }).chainId
+    const event = (params as { event?: unknown }).event
+    if (typeof chainId !== 'string' || !event || typeof event !== 'object') return
+    const name = (event as { name?: unknown }).name
+    const data = (event as { data?: unknown }).data
+    if (name !== 'accountsChanged' || !Array.isArray(data)) return
+    const nextAddresses = data.filter((value): value is string => typeof value === 'string')
+    const namespaceKey = chainId.split(':', 1)[0]
+    const namespaces = provider.session?.namespaces
+    if (!namespaceKey || !namespaces) return
+    const namespace = namespaces[namespaceKey]
+    if (!namespace) return
+    const otherAccounts = (namespace.accounts ?? []).filter(
+      (account) => parseWalletConnectAccount(account)?.chainId !== chainId,
+    )
+    namespace.accounts = [
+      ...otherAccounts,
+      ...nextAddresses.map((address) =>
+        address.startsWith(`${chainId}:`) ? address : `${chainId}:${address}`,
+      ),
+    ]
+  }
+
   function attachDisplayUriListener(
     provider: WalletConnectProviderLike,
     selectedWallet: WalletConnectWalletOption | undefined,
@@ -333,9 +375,20 @@ export async function createWalletConnectController(
       clearProviders()
       if (state.status === 'connected') setState({ status: 'disconnected', wallets })
     }
+    const changedListener = () => refreshConnectedSession(provider)
+    const eventListener = (payload: unknown) => {
+      applyAccountsChangedEvent(provider, payload)
+      refreshConnectedSession(provider)
+    }
     provider.on('session_delete', listener)
     provider.on('session_expire', listener)
+    provider.on('accountsChanged', changedListener)
+    provider.on('chainChanged', changedListener)
+    provider.on('session_update', changedListener)
+    provider.on('session_event', eventListener)
     sessionEndedListener = listener
+    sessionChangedListener = changedListener
+    sessionEventListener = eventListener
     sessionListenerTarget = provider
   }
 
@@ -344,7 +397,17 @@ export async function createWalletConnectController(
       sessionListenerTarget.removeListener?.('session_delete', sessionEndedListener)
       sessionListenerTarget.removeListener?.('session_expire', sessionEndedListener)
     }
+    if (sessionListenerTarget && sessionChangedListener) {
+      sessionListenerTarget.removeListener?.('accountsChanged', sessionChangedListener)
+      sessionListenerTarget.removeListener?.('chainChanged', sessionChangedListener)
+      sessionListenerTarget.removeListener?.('session_update', sessionChangedListener)
+    }
+    if (sessionListenerTarget && sessionEventListener) {
+      sessionListenerTarget.removeListener?.('session_event', sessionEventListener)
+    }
     sessionEndedListener = undefined
+    sessionChangedListener = undefined
+    sessionEventListener = undefined
     sessionListenerTarget = undefined
   }
 

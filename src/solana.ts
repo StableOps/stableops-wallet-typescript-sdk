@@ -1,7 +1,7 @@
 import type { Connection, PublicKey, TransactionInstruction } from '@solana/web3.js'
 
 import {
-  SOLANA_MAINNET_RPC_URL,
+  SOLANA_RPC_URLS,
   SOLANA_TOKEN_PROGRAM_ID_BASE58,
   SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58,
   SOLANA_TRANSFER_CHECKED_INSTRUCTION,
@@ -27,6 +27,19 @@ type SolanaSignatureStatusConnection = {
   getSignatureStatuses?(signatures: string[]): Promise<{
     value: Array<{ err?: unknown; confirmationStatus?: string } | null>
   }>
+}
+
+export function resolveSolanaConnectionSettings(
+  chain: WalletPaymentInstruction['chain'],
+  rpcUrl?: string,
+  hasCustomConnection = false,
+): { rpcUrl: string; preferLocalSend: boolean } {
+  const solanaChain = chain === 'solana-devnet' ? 'solana-devnet' : 'solana'
+  return {
+    rpcUrl: rpcUrl ?? SOLANA_RPC_URLS[solanaChain],
+    // 开发网必须由 SDK 连接开发网节点广播，不能交给可能仍停留在主网的钱包广播。
+    preferLocalSend: hasCustomConnection || Boolean(rpcUrl) || solanaChain === 'solana-devnet',
+  }
 }
 
 function solanaPublicKeyToString(
@@ -249,19 +262,24 @@ export async function sendSolanaWalletPayment(
   const recipient = publicKeyFromString(web3, instruction.address)
   const mint = publicKeyFromString(web3, token.address)
   const amountUnits = parseTokenAmount(input.amount, token.decimals)
-  const preferLocalSend = Boolean(input.solanaConnection || input.solanaRpcUrl)
+  const connectionSettings = resolveSolanaConnectionSettings(
+    instruction.chain,
+    input.solanaRpcUrl,
+    Boolean(input.solanaConnection),
+  )
+  const preferLocalSend = connectionSettings.preferLocalSend
   walletDebug('solana:setup', {
     payer: payer.toBase58(),
     mint: mint.toBase58(),
     amountUnits: amountUnits.toString(),
     rpcUrl: input.solanaConnection
       ? '(custom connection)'
-      : (input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL),
+      : connectionSettings.rpcUrl,
     preferLocalSend,
   })
   const connection =
     input.solanaConnection ??
-    new web3.Connection(input.solanaRpcUrl ?? SOLANA_MAINNET_RPC_URL, 'confirmed')
+    new web3.Connection(connectionSettings.rpcUrl, 'confirmed')
   const tokenProgramId = new web3.PublicKey(SOLANA_TOKEN_PROGRAM_ID_BASE58)
   const associatedTokenProgramId = new web3.PublicKey(SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58)
   const sourceTokenAccount = findAssociatedTokenAddress(
@@ -313,7 +331,7 @@ export async function sendSolanaWalletPayment(
     ),
   )
 
-  // 调用方显式提供 RPC/connection（如 playground devnet）时，锁定到目标 cluster 并本地广播，
+  // 开发网或调用方显式提供 RPC/connection 时，锁定到目标 cluster 并本地广播，
   // 避免钱包按当前所选网络提交；详见 sendSolanaTransaction。
   const txHash = await sendSolanaTransaction(provider, connection, transaction, preferLocalSend)
   // 拿到签名后不阻塞：签名状态查询在后台进行（confirmation promise 将结果通知调用方）。

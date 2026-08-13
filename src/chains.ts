@@ -50,6 +50,11 @@ export const WALLETCONNECT_TRON_METHODS = [
 export const WALLETCONNECT_ACCOUNT_EVENTS = ['accountsChanged', 'chainChanged'] as const
 
 export const SOLANA_MAINNET_RPC_URL = 'https://api.mainnet-beta.solana.com'
+export const SOLANA_DEVNET_RPC_URL = 'https://api.devnet.solana.com'
+export const SOLANA_RPC_URLS: Readonly<Record<'solana' | 'solana-devnet', string>> = {
+  solana: SOLANA_MAINNET_RPC_URL,
+  'solana-devnet': SOLANA_DEVNET_RPC_URL,
+}
 export const SOLANA_TOKEN_PROGRAM_ID_BASE58 = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 export const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID_BASE58 = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
 export const SOLANA_TRANSFER_CHECKED_INSTRUCTION = 12
