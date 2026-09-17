@@ -568,6 +568,39 @@ describe('createWalletConnectController', () => {
     expect(controller.getState()).toMatchObject({ status: 'disconnected' })
   })
 
+  it('connect 挂起期间 disconnect 后钱包仍批准：关闭迟到会话并返回取消错误', async () => {
+    let releaseConnect!: () => void
+    wcMock.state.connectWait = new Promise((resolve) => {
+      releaseConnect = resolve
+    })
+    const controller = await createWalletConnectController({
+      projectId: 'pid',
+      metadata: METADATA,
+      chains: ['base'],
+    })
+
+    const pending = controller.connect()
+    pending.catch(() => {})
+    await vi.waitFor(() => expect(wcMock.state.fakeProvider).toBeDefined())
+    const provider = wcMock.state.fakeProvider!
+    let disconnectCalls = 0
+    provider.disconnect = async () => {
+      disconnectCalls++
+      if (disconnectCalls === 1) throw new Error('No active session')
+      provider.disconnected = true
+    }
+
+    await controller.disconnect()
+    expect(disconnectCalls).toBe(1)
+
+    releaseConnect()
+    await expect(pending).rejects.toMatchObject({ code: 'walletconnect_connect_cancelled' })
+    expect(disconnectCalls).toBe(2)
+    expect(provider.disconnected).toBe(true)
+    expect(controller.getState()).toMatchObject({ status: 'disconnected' })
+    expect(controller.providers.base).toBeUndefined()
+  })
+
   it('wraps connect errors and preserves the original cause', async () => {
     const userRejected = Object.assign(new Error('User rejected'), { code: 4001 })
     wcMock.state.enableError = userRejected

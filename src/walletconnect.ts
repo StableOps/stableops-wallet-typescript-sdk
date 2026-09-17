@@ -470,7 +470,7 @@ export async function createWalletConnectController(
       const selectedWallet = getSelectedWallet(connectInput?.walletId)
       setState({ status: 'connecting', wallets, selectedWallet })
       const epoch = sessionEpoch
-      connectInflight = (async () => {
+      const currentConnect = (async () => {
         let provider: WalletConnectProviderLike
         try {
           provider = await getProvider()
@@ -490,10 +490,22 @@ export async function createWalletConnectController(
         attachSessionLifecycleListeners(provider)
         try {
           await provider.connect({ optionalNamespaces })
+          // connect 挂起期间调用了 disconnect 时，早先的 provider.disconnect() 可能因为
+          // 会话尚未建立而失败。若钱包随后仍批准连接，必须在这里关闭迟到的会话。
+          if (sessionEpoch !== epoch) {
+            try {
+              await provider.disconnect()
+            } catch (err) {
+              walletDebug('walletconnect:stale-connect-disconnect-error', {
+                error: String(err),
+              })
+            }
+            throw new StableOpsWalletError(
+              'WalletConnect connection was cancelled',
+              'walletconnect_connect_cancelled',
+            )
+          }
           const accounts = getSessionAccounts(provider)
-          // connect 挂起期间调用了 disconnect：不再回填 providers / 覆盖状态，
-          // 本地状态保持 disconnected（会话本身已由 disconnect 负责关闭）。
-          if (sessionEpoch !== epoch) return accounts
           assertHasAuthorizedChain(provider)
           fillAuthorizedProviders(provider)
           setState({ status: 'connected', wallets, accounts })
@@ -511,10 +523,12 @@ export async function createWalletConnectController(
           throw error
         }
       })()
+      connectInflight = currentConnect
       try {
-        return await connectInflight
+        return await currentConnect
       } finally {
-        connectInflight = undefined
+        // disconnect 后允许立即发起新连接；旧连接结束时不得清掉新一代 Promise。
+        if (connectInflight === currentConnect) connectInflight = undefined
       }
     },
     async disconnect() {
